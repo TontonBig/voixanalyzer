@@ -1002,6 +1002,20 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     from reportlab.platypus import KeepTogether
 
+    # Enregistrement des polices Unicode (support emojis)
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVu',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'))
+        pdfmetrics.registerFont(TTFont('DejaVuBold',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf'))
+        MONO      = 'DejaVu'
+        MONO_BOLD = 'DejaVuBold'
+    except Exception:
+        MONO      = 'Courier'
+        MONO_BOLD = 'Courier-Bold'
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
                             leftMargin=18*mm, rightMargin=18*mm,
@@ -1028,10 +1042,12 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
     )
 
     # ── Styles
-    def sty(name, fontName='Courier-Bold', textColor=None, fontSize=10,
+    def sty(name, fontName=None, textColor=None, fontSize=10,
             leading=14, **kw):
         if textColor is None:
             textColor = BLANC
+        if fontName is None:
+            fontName = MONO_BOLD
         return ParagraphStyle(name, fontName=fontName, textColor=textColor,
                               fontSize=fontSize, leading=leading, **kw)
 
@@ -1039,11 +1055,11 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
     S_SUB    = sty('sub',   fontSize=8,  textColor=GRIS,  spaceAfter=8, leading=10)
     S_H2     = sty('h2',    fontSize=14, textColor=ROUGE, spaceBefore=10, spaceAfter=4)
     S_LABEL  = sty('lbl',   fontSize=9,  textColor=GRIS_CLR, leading=12)
-    S_DETAIL = sty('det',   fontSize=8,  textColor=GRIS,  leading=12, fontName='Courier')
+    S_DETAIL = sty('det',   fontSize=8,  textColor=GRIS,  leading=12, fontName=MONO)
     S_SCORE  = sty('sc',    fontSize=52, textColor=score_color, leading=56, alignment=TA_CENTER)
     S_SLABEL = sty('slbl',  fontSize=13, textColor=score_color, leading=16, alignment=TA_CENTER)
-    S_PENAL  = sty('pen',   fontSize=8,  textColor=GRIS,  leading=13, fontName='Courier')
-    S_TIP    = sty('tip',   fontSize=8,  textColor=GRIS,  leading=13, fontName='Courier')
+    S_PENAL  = sty('pen',   fontSize=8,  textColor=GRIS,  leading=15, fontName=MONO)
+    S_TIP    = sty('tip',   fontSize=8,  textColor=GRIS,  leading=14, fontName=MONO)
     S_FOOTER = sty('ftr',   fontSize=7,  textColor=GRIS_CLR, alignment=TA_CENTER, leading=10)
 
     EMOJI_COLOR = {
@@ -1087,12 +1103,18 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
                             color=colors.HexColor('#222'), spaceAfter=8))
     story.append(Paragraph("SCORE GLOBAL", S_H2))
 
+    # Colonne droite du score : label + pénalités séparés
+    penal_lines = ("Aucune pénalité — prise parfaite ✓" if not breakdown else
+                   "\n".join([f"  {n}   {v:+d} pts" for n, v in breakdown]))
+    score_right = [
+        Paragraph(label_score, sty('slbl2', fontSize=13,
+                  textColor=score_color, leading=16, fontName=MONO_BOLD)),
+        Spacer(1, 8),
+        Paragraph(penal_lines, S_PENAL),
+    ]
+    from reportlab.platypus import KeepInFrame
     score_tbl = Table(
-        [[Paragraph(str(score), S_SCORE),
-          Paragraph(f"{label_score}\n\n" +
-                    ("Aucune pénalité — prise parfaite" if not breakdown else
-                     "\n".join([f"{n}  {v:+d} pts" for n, v in breakdown])),
-                    S_PENAL)]],
+        [[Paragraph(str(score), S_SCORE), score_right]],
         colWidths=[50*mm, 115*mm]
     )
     score_tbl.setStyle(TableStyle([
@@ -1210,12 +1232,14 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
         rows = []
         for emoji, titre_item, detail in items:
             c = EMOJI_COLOR.get(emoji, GRIS)
+            # Remplace emojis couleur par texte si DejaVu pas dispo
+            label_txt = f"{emoji} {titre_item}"
             rows.append([
-                Paragraph(f"{emoji} {titre_item}",
-                          ParagraphStyle('ri', fontName='Courier-Bold',
-                                         fontSize=8, textColor=c, leading=12)),
+                Paragraph(label_txt,
+                          ParagraphStyle('ri', fontName=MONO_BOLD,
+                                         fontSize=8, textColor=c, leading=13)),
                 Paragraph(detail,
-                          ParagraphStyle('rd', fontName='Courier',
+                          ParagraphStyle('rd', fontName=MONO,
                                          fontSize=7.5, textColor=GRIS, leading=11))
             ])
         if rows:
@@ -1239,12 +1263,12 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
                             color=colors.HexColor('#222'), spaceAfter=6))
     story.append(Paragraph("POUR TA PROCHAINE PRISE", S_H2))
     conseils = [
-        "📍  15-20 cm du micro — ni trop pres (graves) ni trop loin (reverb)",
-        "🔇  Ferme les fenetres, coupe la clim, decroche le frigo",
-        "👕  Enregistre dans un placard plein de vetements",
-        "🎤  Anti-pop obligatoire — legerement de cote si tu manques de consonance",
-        "💧  Bois de l'eau avant pour eviter les clics de bouche",
-        "📱  Aucun traitement a l'entree — enregistre le signal brut",
+        ">>  15-20 cm du micro — ni trop pres (graves) ni trop loin (reverb)",
+        ">>  Ferme les fenetres, coupe la clim, decroche le frigo",
+        ">>  Enregistre dans un placard plein de vetements",
+        ">>  Anti-pop obligatoire — de cote si tu manques de consonance",
+        ">>  Bois de l'eau avant pour eviter les clics de bouche",
+        ">>  Aucun traitement a l'entree — enregistre le signal brut",
     ]
     for c in conseils:
         story.append(Paragraph(c, S_TIP))
