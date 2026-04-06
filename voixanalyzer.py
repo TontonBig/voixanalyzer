@@ -1526,52 +1526,69 @@ def render_mode_avantapres():
                     f"▼ {delta_score} pts — Le traitement a dégradé la prise ✗"
                     if delta_score < 0 else "— Score identique")
 
-        def mini_score_card(score, label, couleur, titre_card):
-            pct   = score / 100
-            r     = int(255 + (0 - 255) * pct)
-            g     = int(60  + (255 - 60) * pct)
-            col   = f"rgb({r},{g},80)"
-            # Barre de progression CSS pure — pas de SVG
-            bar_w = int(pct * 100)
-            return f"""
-            <div style='flex:1;background:#111;border-radius:12px;padding:20px 16px;
-                        text-align:center;border:1px solid #222;min-width:0'>
-                <div style='color:#333;font-size:9px;letter-spacing:3px;
-                            font-family:monospace;margin-bottom:12px'>{titre_card}</div>
-                <div style='color:{col};font-family:monospace;font-size:52px;
-                            font-weight:bold;line-height:1'>{score}</div>
-                <div style='color:#333;font-family:monospace;font-size:9px;
-                            margin-bottom:10px'>/100</div>
-                <div style='background:#1a1a1a;border-radius:4px;height:6px;
-                            margin:0 10px 10px 10px;overflow:hidden'>
-                    <div style='background:{col};height:100%;width:{bar_w}%;
-                                border-radius:4px;transition:width 0.8s ease'></div>
-                </div>
-                <div style='color:{col};font-family:monospace;font-size:12px;
-                            font-weight:bold;letter-spacing:3px'>{label}</div>
-            </div>"""
+        # Scores côte à côte — composants natifs Streamlit
+        col_b, col_arr, col_t = st.columns([5, 2, 5])
 
-        arrow_html = f"""
-        <div style='display:flex;align-items:center;justify-content:center;
-                    padding:0 16px;flex-shrink:0'>
-            <div style='text-align:center'>
-                <div style='color:{ds_color};font-size:32px;font-weight:bold;
+        def score_color(s):
+            if s >= 85: return "#00ff88"
+            if s >= 70: return "#88ff44"
+            if s >= 55: return "#ffcc00"
+            if s >= 35: return "#ff8c00"
+            return "#ff3c3c"
+
+        with col_b:
+            cb2 = score_color(s_brut)
+            st.markdown(f"""
+            <div style='background:#111;border-radius:12px;padding:20px 16px;
+                        text-align:center;border:1px solid #222'>
+                <div style='color:#333;font-size:9px;letter-spacing:3px;
+                            font-family:monospace;margin-bottom:8px'>BRUT</div>
+                <div style='color:{cb2};font-family:monospace;font-size:56px;
+                            font-weight:bold;line-height:1'>{s_brut}</div>
+                <div style='color:#333;font-family:monospace;font-size:9px;
+                            margin-bottom:8px'>/100</div>
+                <div style='background:#1a1a1a;border-radius:3px;height:5px;
+                            margin:0 8px 10px;overflow:hidden'>
+                    <div style='background:{cb2};height:100%;
+                                width:{s_brut}%'></div></div>
+                <div style='color:{cb2};font-family:monospace;font-size:12px;
+                            font-weight:bold;letter-spacing:2px'>{lb}</div>
+            </div>""", unsafe_allow_html=True)
+
+        with col_arr:
+            st.markdown(f"""
+            <div style='display:flex;flex-direction:column;align-items:center;
+                        justify-content:center;height:160px;text-align:center'>
+                <div style='color:{ds_color};font-size:28px;font-weight:bold;
                             font-family:monospace'>{arrow}</div>
-                <div style='color:{ds_color};font-size:20px;font-weight:bold;
+                <div style='color:{ds_color};font-size:22px;font-weight:bold;
                             font-family:monospace'>{ds_sign}{delta_score}</div>
                 <div style='color:#444;font-size:9px;font-family:monospace;
                             letter-spacing:1px'>PTS</div>
-            </div>
-        </div>"""
+            </div>""", unsafe_allow_html=True)
+
+        with col_t:
+            ct2 = score_color(s_traite)
+            st.markdown(f"""
+            <div style='background:#111;border-radius:12px;padding:20px 16px;
+                        text-align:center;border:1px solid #222'>
+                <div style='color:#333;font-size:9px;letter-spacing:3px;
+                            font-family:monospace;margin-bottom:8px'>TRAITÉ</div>
+                <div style='color:{ct2};font-family:monospace;font-size:56px;
+                            font-weight:bold;line-height:1'>{s_traite}</div>
+                <div style='color:#333;font-family:monospace;font-size:9px;
+                            margin-bottom:8px'>/100</div>
+                <div style='background:#1a1a1a;border-radius:3px;height:5px;
+                            margin:0 8px 10px;overflow:hidden'>
+                    <div style='background:{ct2};height:100%;
+                                width:{s_traite}%'></div></div>
+                <div style='color:{ct2};font-family:monospace;font-size:12px;
+                            font-weight:bold;letter-spacing:2px'>{lt}</div>
+            </div>""", unsafe_allow_html=True)
 
         st.markdown(f"""
-        <div style='display:flex;align-items:center;gap:8px;margin:16px 0'>
-            {mini_score_card(s_brut,   lb, cb, 'BRUT')}
-            {arrow_html}
-            {mini_score_card(s_traite, lt, ct, 'TRAITÉ')}
-        </div>
         <div style='background:#111;border:2px solid {ds_color};border-radius:12px;
-                    padding:14px 24px;text-align:center;margin:12px 0'>
+                    padding:14px 24px;text-align:center;margin:16px 0'>
             <span style='color:{ds_color};font-family:monospace;font-size:15px;
                          font-weight:bold;letter-spacing:2px'>{ds_label}</span>
         </div>""", unsafe_allow_html=True)
