@@ -979,7 +979,7 @@ def render_spectre(x, sr, a):
 
     ax.set_title('ANALYSE SPECTRALE', color='#ff3c3c',
                  fontsize=11, fontfamily='monospace',
-                 loc='left', pad=10, fontweight='bold', letterspacing=3)
+                 loc='left', pad=10, fontweight='bold')
 
     fig.tight_layout(pad=1.5)
     st.pyplot(fig, use_container_width=True)
