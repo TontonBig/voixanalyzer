@@ -1229,22 +1229,31 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
                                 color=colors.HexColor('#222'), spaceAfter=6))
         story.append(Paragraph(titre_bloc, S_H2))
 
+        EMOJI_LABEL = {
+            '🔴': '[!!]', '🟡': '[ ! ]', '🟢': '[ OK]',
+            '🔵': '[--]', '👂': '[ear]',
+        }
         rows = []
         for emoji, titre_item, detail in items:
             c = EMOJI_COLOR.get(emoji, GRIS)
-            # Remplace emojis couleur par texte si DejaVu pas dispo
-            label_txt = f"{emoji} {titre_item}"
+            tag = EMOJI_LABEL.get(emoji, '    ')
+            label_txt = f"{tag}  {titre_item}"
+            # Dans le detail, remplace aussi les emojis résiduels
+            detail_clean = (detail
+                .replace('🔴', '[!!]').replace('🟢', '[OK]')
+                .replace('🟡', '[!]').replace('🔵', '[--]'))
             rows.append([
                 Paragraph(label_txt,
                           ParagraphStyle('ri', fontName=MONO_BOLD,
                                          fontSize=8, textColor=c, leading=13)),
-                Paragraph(detail,
+                Paragraph(detail_clean,
                           ParagraphStyle('rd', fontName=MONO,
                                          fontSize=7.5, textColor=GRIS, leading=11))
             ])
         if rows:
             tbl_b = Table(rows, colWidths=[68*mm, 97*mm])
-            tbl_b.setStyle(TableStyle([
+            # Style de base
+            ts = [
                 ('BACKGROUND',   (0,0),(-1,-1), BG_DARK),
                 ('ROWBACKGROUNDS',(0,0),(-1,-1),
                  [BG_DARK, colors.HexColor('#131313')]),
@@ -1254,7 +1263,12 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
                 ('LEFTPADDING',  (0,0),(-1,-1), 7),
                 ('RIGHTPADDING', (0,0),(-1,-1), 7),
                 ('GRID',         (0,0),(-1,-1), 0.4, GRIS_CLR),
-            ]))
+            ]
+            # Barre colorée à gauche par ligne selon statut
+            for i, (emoji, _, _) in enumerate(items):
+                c_line = EMOJI_COLOR.get(emoji, GRIS)
+                ts.append(('LINEBEFORE', (0,i),(0,i), 3, c_line))
+            tbl_b.setStyle(TableStyle(ts))
             story.append(tbl_b)
         story.append(Spacer(1, 6))
 
@@ -1286,44 +1300,34 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
 
 
 # ═══════════════════════════════════════════════════
-#  UI
+#  HELPERS UI PARTAGÉS
 # ═══════════════════════════════════════════════════
 
-st.markdown("<h1>🎙️ VOIXANALYZER</h1>", unsafe_allow_html=True)
-st.markdown("<p style='color:#555;font-size:11px;letter-spacing:3px;margin-top:-10px'>DIAGNOSTIC PRO D'UNE PRISE VOIX — GRATUIT</p>", unsafe_allow_html=True)
-st.markdown("<hr style='border-color:#222;margin:24px 0'>", unsafe_allow_html=True)
+def charger_audio(file_obj):
+    import librosa
+    suffix = "." + file_obj.name.rsplit(".", 1)[-1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_obj.read())
+        tmp_path = tmp.name
+    x, sr = librosa.load(tmp_path, sr=44100, mono=True)
+    x = (x - float(np.mean(x))).astype(np.float32)
+    os.unlink(tmp_path)
+    return x, sr, len(x) / sr
 
-st.markdown("<h3>📂 Ta prise voix brute</h3>", unsafe_allow_html=True)
-st.markdown("<p style='color:#444;font-size:11px'>Charge ta prise non traitée — WAV de préférence, brut de micro</p>", unsafe_allow_html=True)
+def render_bloc(titre, items, couleur_titre="#ff3c3c"):
+    st.markdown(f"<h2 style='color:{couleur_titre}'>{titre}</h2>", unsafe_allow_html=True)
+    for emoji, titre_item, detail in items:
+        if emoji == "🔵":   couleur = "#4499ff"
+        elif emoji == "👂": couleur = "#aa88ff"
+        else: couleur = {"🔴":"#ff3c3c","🟡":"#ff8c00","🟢":"#00ff88"}.get(emoji,"#888")
+        st.markdown(f"""
+        <div style='background:#111;border-left:3px solid {couleur};border-radius:8px;padding:12px 16px;margin:6px 0'>
+            <div style='color:{couleur};font-size:13px;font-weight:bold'>{emoji} {titre_item}</div>
+            <div style='color:#666;font-size:11px;margin-top:5px;line-height:1.8'>{detail}</div>
+        </div>""", unsafe_allow_html=True)
 
-uploaded = st.file_uploader(
-    "WAV · MP3 · FLAC · OGG · M4A",
-    type=["wav","mp3","flac","ogg","m4a"],
-    label_visibility="visible"
-)
-
-if uploaded is None:
-    st.info("👆 Charge ta prise voix pour commencer l'analyse.")
-    st.stop()
-
-# Chargement
-with st.spinner("Chargement du fichier..."):
-    try:
-        import librosa
-        suffix = "." + uploaded.name.rsplit(".", 1)[-1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(uploaded.read())
-            tmp_path = tmp.name
-        x, sr = librosa.load(tmp_path, sr=44100, mono=True)
-        x = (x - float(np.mean(x))).astype(np.float32)
-        os.unlink(tmp_path)
-        duree = len(x) / sr
-    except Exception as e:
-        st.error(f"❌ Impossible de lire le fichier : {e}")
-        st.stop()
-
-if st.button("🎙️ ANALYSER MA VOIX"):
-
+def render_diagnostic_complet(uploaded, x, sr, duree):
+    """Affiche le diagnostic complet d'une prise."""
     with st.spinner("Analyse en cours — mesures DSP..."):
         prog = st.progress(0)
         prog.progress(10, text="🔍 Mesure du bruit de fond...")
@@ -1337,69 +1341,41 @@ if st.button("🎙️ ANALYSER MA VOIX"):
 
     st.markdown("<hr style='border-color:#222;margin:24px 0'>", unsafe_allow_html=True)
 
-    # ── SCORE GLOBAL ──
-    st.markdown("<h2>🏆 SCORE GLOBAL</h2>", unsafe_allow_html=True)
     score, label_score, couleur_score, breakdown = calculer_score(a)
+
+    st.markdown("<h2>🏆 SCORE GLOBAL</h2>", unsafe_allow_html=True)
     render_score(score, label_score, couleur_score, breakdown)
     st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
 
-    # ── SPECTRE ANNOTÉ ──
     st.markdown("<h2>📈 SPECTRE ANNOTÉ</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Courbe rouge = ta voix · Pointillés verts = référence voix équilibrée · Marqueurs = problèmes détectés</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Courbe rouge = ta voix · Pointillés verts = référence · Marqueurs = problèmes</p>", unsafe_allow_html=True)
     render_spectre(x, sr, a)
-
     st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
 
-    # ── MÉTRIQUES RAPIDES ──
     st.markdown("<h3>📊 Mesures clés</h3>", unsafe_allow_html=True)
     c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric("RMS actif",   f"{a['rms']:.0f} dB")
-    c2.metric("Peak",        f"{a['peak']:.1f} dB")
-    c3.metric("Crest",       f"{a['crest']:.0f} dB")
-    c4.metric("SNR ~",       f"{a['snr']:.0f} dB")
-    c5.metric("RT60 ~",      f"{a['rt60']:.0f} ms" if a['rt60'] > 0 else "sec")
-    c6.metric("Durée",       f"{duree:.0f}s")
+    c1.metric("RMS actif",  f"{a['rms']:.0f} dB")
+    c2.metric("Peak",       f"{a['peak']:.1f} dB")
+    c3.metric("Crest",      f"{a['crest']:.0f} dB")
+    c4.metric("SNR ~",      f"{a['snr']:.0f} dB")
+    c5.metric("RT60 ~",     f"{a['rt60']:.0f} ms" if a['rt60'] > 0 else "sec")
+    c6.metric("Durée",      f"{duree:.0f}s")
 
-    def render_bloc(titre, items, couleur_titre="#ff3c3c"):
-        st.markdown(f"<h2 style='color:{couleur_titre}'>{titre}</h2>", unsafe_allow_html=True)
-        for emoji, titre_item, detail in items:
-            if emoji == "🔵":
-                couleur = "#4499ff"
-            elif emoji == "👂":
-                couleur = "#aa88ff"
-            else:
-                couleur = {"🔴":"#ff3c3c","🟡":"#ff8c00","🟢":"#00ff88"}.get(emoji, "#888")
-            st.markdown(f"""
-            <div style='background:#111;border-left:3px solid {couleur};border-radius:8px;padding:12px 16px;margin:6px 0'>
-                <div style='color:{couleur};font-size:13px;font-weight:bold'>{emoji} {titre_item}</div>
-                <div style='color:#666;font-size:11px;margin-top:5px;line-height:1.8'>{detail}</div>
-            </div>""", unsafe_allow_html=True)
-
-    render_bloc("1 — PROPRETÉ",     bloc_proprete(a))
-    render_bloc("2 — CONTRÔLE",     bloc_controle(a))
-    render_bloc("3 — COMPRÉHENSION",bloc_comprehension(a))
-    render_bloc("4 — COULEUR",      bloc_couleur(a))
-    render_bloc("5 — PROBLÈMES",    bloc_problemes(a))
-    render_bloc("6 — VERDICT",      bloc_verdict(a), couleur_titre="#00ff88")
+    render_bloc("1 — PROPRETÉ",      bloc_proprete(a))
+    render_bloc("2 — CONTRÔLE",      bloc_controle(a))
+    render_bloc("3 — COMPRÉHENSION", bloc_comprehension(a))
+    render_bloc("4 — COULEUR",       bloc_couleur(a))
+    render_bloc("5 — PROBLÈMES",     bloc_problemes(a))
+    render_bloc("6 — VERDICT",       bloc_verdict(a), couleur_titre="#00ff88")
 
     st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
-
-    # ── EXPORT PDF ──
     st.markdown("<h2>📄 EXPORTER LE RAPPORT</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Rapport complet — score, spectre annoté, tous les blocs de diagnostic</p>", unsafe_allow_html=True)
     with st.spinner("Génération du PDF..."):
-        pdf_bytes = generer_pdf(
-            uploaded.name, duree, score, label_score, breakdown, a, x, sr
-        )
+        pdf_bytes = generer_pdf(uploaded.name, duree, score, label_score, breakdown, a, x, sr)
     nom_pdf = uploaded.name.rsplit(".", 1)[0] + "_diagnostic.pdf"
-    st.download_button(
-        label="⬇️ TÉLÉCHARGER LE RAPPORT PDF",
-        data=pdf_bytes,
-        file_name=nom_pdf,
-        mime="application/pdf",
-        use_container_width=True,
-    )
-
+    st.download_button("⬇️ TÉLÉCHARGER LE RAPPORT PDF", data=pdf_bytes,
+                       file_name=nom_pdf, mime="application/pdf",
+                       use_container_width=True)
     st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
     st.markdown("""
     <div style='background:#111;border:1px solid #1a1a1a;border-radius:12px;padding:20px;font-size:11px;color:#555;line-height:2'>
@@ -1412,3 +1388,260 @@ if st.button("🎙️ ANALYSER MA VOIX"):
     📱 Aucun traitement à l'entrée — enregistre le signal brut
     </div>
     """, unsafe_allow_html=True)
+
+    return a, score, label_score, breakdown
+
+
+# ═══════════════════════════════════════════════════
+#  MODE AVANT / APRÈS
+# ═══════════════════════════════════════════════════
+
+def render_delta(label, val_brut, val_traite, unite="", inverse=False):
+    """Affiche une métrique avec delta coloré brut→traité."""
+    delta = val_traite - val_brut
+    if inverse:
+        delta = -delta  # pour les métriques où baisser = mieux (bruit, rt60...)
+    couleur = "#00ff88" if delta > 0 else ("#ff3c3c" if delta < 0 else "#555")
+    signe   = "+" if delta > 0 else ""
+    fleche  = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+    st.markdown(f"""
+    <div style='background:#111;border-radius:8px;padding:10px 14px;margin:4px 0;
+                display:flex;justify-content:space-between;align-items:center'>
+        <span style='color:#555;font-size:11px;font-family:monospace'>{label}</span>
+        <span style='color:#444;font-size:11px;font-family:monospace'>
+            {val_brut:.1f}{unite} → {val_traite:.1f}{unite}
+        </span>
+        <span style='color:{couleur};font-size:13px;font-weight:bold;font-family:monospace'>
+            {fleche} {signe}{delta:.1f}{unite}
+        </span>
+    </div>""", unsafe_allow_html=True)
+
+def render_spectre_comparaison(x_brut, sr, x_traite):
+    """Spectre superposé brut (rouge) vs traité (vert)."""
+    def compute_smooth(x):
+        N = min(len(x), 131072)
+        X = np.abs(rfft(x[:N] * np.hanning(N))) ** 2
+        freqs = rfftfreq(N, 1.0 / sr)
+        mask = (freqs >= 20) & (freqs <= 20000)
+        f_plot, X_plot = freqs[mask], X[mask]
+        log_f = np.log10(f_plot + 1)
+        f_bins = np.linspace(log_f[0], log_f[-1], 300)
+        Xs = np.interp(f_bins, log_f, 10 * np.log10(X_plot + 1e-12))
+        Xs = np.convolve(Xs, np.ones(15) / 15, mode='same')
+        return 10 ** f_bins, Xs
+
+    f_hz, X_brut   = compute_smooth(x_brut)
+    _,    X_traite = compute_smooth(x_traite)
+
+    # Aligne les deux courbes sur la même énergie moyenne pour comparaison timbrale
+    offset = np.mean(X_brut) - np.mean(X_traite)
+    X_traite_aligned = X_traite + offset
+
+    fig, ax = plt.subplots(figsize=(11, 4))
+    fig.patch.set_facecolor('#0d0d0d')
+    ax.set_facecolor('#0d0d0d')
+
+    zones = [(20,80,'#1a0a0a'),(80,200,'#1a1000'),(200,500,'#0a1200'),
+             (500,2000,'#0a100a'),(2000,5000,'#0a0a18'),
+             (5000,10000,'#0d0a18'),(10000,20000,'#0a0d18')]
+    labels_z = ['SUB','GRAVES','LO-MID','MID','PRÉSENCE','SIBIL.','AIR']
+    for (f0,f1,col), lbl in zip(zones, labels_z):
+        ax.axvspan(f0, f1, color=col, alpha=1.0)
+        ax.text((f0*f1)**0.5, max(X_brut.max(), X_traite_aligned.max()) + 1.5,
+                lbl, color='#2a2a2a', fontsize=7, ha='center', fontfamily='monospace')
+
+    ax.plot(f_hz, X_brut,            color='#ff3c3c', linewidth=1.6,
+            alpha=0.9, label='Brut')
+    ax.plot(f_hz, X_traite_aligned,  color='#00ff88', linewidth=1.6,
+            alpha=0.9, label='Traité', linestyle='-')
+    ax.fill_between(f_hz, X_brut, X_traite_aligned,
+                    where=(X_traite_aligned > X_brut),
+                    color='#00ff88', alpha=0.06, label='Gain')
+    ax.fill_between(f_hz, X_brut, X_traite_aligned,
+                    where=(X_traite_aligned < X_brut),
+                    color='#ff3c3c', alpha=0.06, label='Perte')
+
+    ax.set_xscale('log'); ax.set_xlim(20, 20000)
+    y_min = min(X_brut.min(), X_traite_aligned.min()) - 3
+    y_max = max(X_brut.max(), X_traite_aligned.max()) + 6
+    ax.set_ylim(y_min, y_max)
+    ax.tick_params(colors='#444', labelsize=8)
+    ax.xaxis.set_major_formatter(FuncFormatter(
+        lambda v,_: f"{int(v/1000)}k" if v>=1000 else str(int(v))))
+    ax.xaxis.set_major_locator(plt.FixedLocator(
+        [20,50,100,200,500,1000,2000,5000,10000,20000]))
+    for sp in ax.spines.values(): sp.set_edgecolor('#222')
+    ax.grid(True, which='major', color='#1a1a1a', linewidth=0.8)
+    leg = ax.legend(loc='lower right', facecolor='#111',
+                    edgecolor='#333', labelcolor='#aaa', fontsize=9)
+    ax.set_title('COMPARAISON SPECTRALE  —  BRUT vs TRAITÉ',
+                 color='#ff3c3c', fontsize=10, fontfamily='monospace',
+                 loc='left', pad=10, fontweight='bold')
+    fig.tight_layout(pad=1.5)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+def render_mode_avantapres():
+    st.markdown("<h3>🎚️ Prise BRUTE</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#444;font-size:11px'>Voix non traitée — brut de micro</p>", unsafe_allow_html=True)
+    up_brut = st.file_uploader("Prise brute — WAV · MP3 · FLAC · OGG · M4A",
+                                type=["wav","mp3","flac","ogg","m4a"],
+                                key="brut", label_visibility="visible")
+
+    st.markdown("<h3>✨ Prise TRAITÉE</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#444;font-size:11px'>Même prise après ton traitement (compression, EQ, etc.)</p>", unsafe_allow_html=True)
+    up_traite = st.file_uploader("Prise traitée — WAV · MP3 · FLAC · OGG · M4A",
+                                  type=["wav","mp3","flac","ogg","m4a"],
+                                  key="traite", label_visibility="visible")
+
+    if up_brut is None or up_traite is None:
+        st.info("👆 Charge les deux prises pour lancer la comparaison.")
+        return
+
+    if st.button("⚡ COMPARER BRUT VS TRAITÉ"):
+        try:
+            x_brut,   sr, duree_brut   = charger_audio(up_brut)
+            x_traite, _,  duree_traite = charger_audio(up_traite)
+        except Exception as e:
+            st.error(f"❌ Erreur chargement : {e}"); return
+
+        with st.spinner("Analyse des deux prises..."):
+            a_brut   = analyser_voix(x_brut,   sr)
+            a_traite = analyser_voix(x_traite,  sr)
+
+        s_brut,  lb,  cb,  bd_brut   = calculer_score(a_brut)
+        s_traite, lt, ct,  bd_traite = calculer_score(a_traite)
+        delta_score = s_traite - s_brut
+
+        st.markdown("<hr style='border-color:#222;margin:24px 0'>", unsafe_allow_html=True)
+
+        # ── Score comparé
+        st.markdown("<h2>🏆 RÉSULTAT DE LA COMPARAISON</h2>", unsafe_allow_html=True)
+
+        ds_color = "#00ff88" if delta_score > 0 else ("#ff3c3c" if delta_score < 0 else "#555")
+        ds_label = (f"▲ +{delta_score} pts — Le traitement a amélioré la prise ✓"
+                    if delta_score > 0 else
+                    f"▼ {delta_score} pts — Le traitement a dégradé la prise ✗"
+                    if delta_score < 0 else
+                    "— Score identique")
+
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col1:
+            render_score(s_brut,   lb, cb, bd_brut)
+            st.markdown("<p style='text-align:center;color:#555;font-size:11px;margin-top:-8px'>BRUT</p>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+            <div style='display:flex;align-items:center;justify-content:center;height:100%;
+                        font-family:monospace;font-size:28px;color:{ds_color};
+                        font-weight:bold;text-align:center;padding-top:60px'>
+                →
+            </div>""", unsafe_allow_html=True)
+        with col3:
+            render_score(s_traite, lt, ct, bd_traite)
+            st.markdown("<p style='text-align:center;color:#555;font-size:11px;margin-top:-8px'>TRAITÉ</p>", unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div style='background:#111;border:2px solid {ds_color};border-radius:12px;
+                    padding:16px 24px;text-align:center;margin:16px 0'>
+            <span style='color:{ds_color};font-family:monospace;font-size:16px;
+                         font-weight:bold;letter-spacing:2px'>{ds_label}</span>
+        </div>""", unsafe_allow_html=True)
+
+        # ── Spectre comparé
+        st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+        st.markdown("<h2>📈 COMPARAISON SPECTRALE</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Rouge = brut · Vert = traité · Zone verte = gain · Zone rouge = perte</p>", unsafe_allow_html=True)
+        render_spectre_comparaison(x_brut, sr, x_traite)
+
+        # ── Delta métriques
+        st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+        st.markdown("<h2>📊 ÉVOLUTION DES MÉTRIQUES</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>▲ vert = amélioré · ▼ rouge = dégradé</p>", unsafe_allow_html=True)
+
+        render_delta("RMS actif",          a_brut['rms'],         a_traite['rms'],         " dB")
+        render_delta("Bruit de fond",      a_brut['noise_floor'], a_traite['noise_floor'],  " dB", inverse=True)
+        render_delta("SNR",                a_brut['snr'],         a_traite['snr'],          " dB")
+        render_delta("RT60 (réverb)",      a_brut['rt60'],        a_traite['rt60'],         " ms", inverse=True)
+        render_delta("Crest factor",       a_brut['crest'],       a_traite['crest'],        " dB")
+        render_delta("Régularité volume",  a_brut['vol_std'],     a_traite['vol_std'],      " dB", inverse=True)
+        render_delta("Sibilance (écart)",  a_brut['sib_ecart'],   a_traite['sib_ecart'],    " dB", inverse=True)
+        render_delta("Déséquilibre spectral", a_brut['deseq'],    a_traite['deseq'],        " dB", inverse=True)
+        render_delta("Attaques",           a_brut['attaques'],    a_traite['attaques'],     "/10")
+
+        # ── Ce que le traitement a amélioré / dégradé
+        st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+        st.markdown("<h2 style='color:#00ff88'>✅ BILAN DU TRAITEMENT</h2>", unsafe_allow_html=True)
+
+        ameliore, degrade, neutre = [], [], []
+
+        checks = [
+            ("SNR",            a_brut['snr'],         a_traite['snr'],         2,  False, "SNR amélioré — bruit réduit"),
+            ("Réverb",         a_brut['rt60'],        a_traite['rt60'],        100, True,  "Réverb réduite"),
+            ("Déséquilibre EQ",a_brut['deseq'],       a_traite['deseq'],       3,  True,  "EQ plus équilibré"),
+            ("Sibilance",      a_brut['sib_ecart'],   a_traite['sib_ecart'],   1,  True,  "Sibilance contrôlée"),
+            ("Volume régulier",a_brut['vol_std'],     a_traite['vol_std'],     1,  True,  "Volume plus régulier"),
+            ("Attaques",       a_brut['attaques'],    a_traite['attaques'],    1,  False, "Attaques améliorées"),
+            ("Crest factor",   a_brut['crest'],       a_traite['crest'],       2,  False, "Dynamique préservée"),
+            ("Saturation",     a_brut['clips'],       a_traite['clips'],       1,  True,  "Saturation ajoutée au traitement"),
+        ]
+
+        for nom, vb, vt, seuil, inv, msg_ok in checks:
+            delta = (vb - vt) if inv else (vt - vb)
+            if delta >= seuil:
+                ameliore.append(msg_ok)
+            elif delta <= -seuil:
+                degrade.append(f"{nom} dégradé")
+
+        for msg in ameliore:
+            st.markdown(f"<div style='background:#0a1a0a;border-left:3px solid #00ff88;"
+                        f"border-radius:6px;padding:8px 14px;margin:4px 0;"
+                        f"color:#00ff88;font-size:12px;font-family:monospace'>✓ {msg}</div>",
+                        unsafe_allow_html=True)
+        for msg in degrade:
+            st.markdown(f"<div style='background:#1a0a0a;border-left:3px solid #ff3c3c;"
+                        f"border-radius:6px;padding:8px 14px;margin:4px 0;"
+                        f"color:#ff3c3c;font-size:12px;font-family:monospace'>✗ {msg}</div>",
+                        unsafe_allow_html=True)
+        if not ameliore and not degrade:
+            st.markdown("<p style='color:#555;font-size:11px'>Aucune différence significative détectée.</p>",
+                        unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════
+#  UI — NAVIGATION
+# ═══════════════════════════════════════════════════
+
+st.markdown("<h1>🎙️ VOIXANALYZER</h1>", unsafe_allow_html=True)
+st.markdown("<p style='color:#555;font-size:11px;letter-spacing:3px;margin-top:-10px'>DIAGNOSTIC PRO D'UNE PRISE VOIX — GRATUIT</p>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:#222;margin:24px 0'>", unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["🎙️ DIAGNOSTIC", "⚡ AVANT / APRÈS"])
+
+# ──────────────────────────────
+#  ONGLET 1 — DIAGNOSTIC SIMPLE
+# ──────────────────────────────
+with tab1:
+    st.markdown("<h3>📂 Ta prise voix brute</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#444;font-size:11px'>Charge ta prise non traitée — WAV de préférence, brut de micro</p>", unsafe_allow_html=True)
+    uploaded = st.file_uploader("WAV · MP3 · FLAC · OGG · M4A",
+                                 type=["wav","mp3","flac","ogg","m4a"],
+                                 key="diag", label_visibility="visible")
+    if uploaded is None:
+        st.info("👆 Charge ta prise voix pour commencer l'analyse.")
+    else:
+        try:
+            x, sr, duree = charger_audio(uploaded)
+        except Exception as e:
+            st.error(f"❌ Impossible de lire le fichier : {e}")
+            st.stop()
+        if st.button("🎙️ ANALYSER MA VOIX"):
+            render_diagnostic_complet(uploaded, x, sr, duree)
+
+# ──────────────────────────────
+#  ONGLET 2 — AVANT / APRÈS
+# ──────────────────────────────
+with tab2:
+    st.markdown("<p style='color:#444;font-size:11px;margin-bottom:16px'>"
+                "Compare ta prise brute et ta prise traitée — score, spectre, métriques côte à côte.</p>",
+                unsafe_allow_html=True)
+    render_mode_avantapres()
