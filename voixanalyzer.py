@@ -1028,32 +1028,23 @@ def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
     )
 
     # ── Styles
-    def sty(name, **kw):
-        base = ParagraphStyle(name, fontName='Courier-Bold',
-                              textColor=BLANC, fontSize=10,
-                              leading=14, **kw)
-        return base
+    def sty(name, fontName='Courier-Bold', textColor=None, fontSize=10,
+            leading=14, **kw):
+        if textColor is None:
+            textColor = BLANC
+        return ParagraphStyle(name, fontName=fontName, textColor=textColor,
+                              fontSize=fontSize, leading=leading, **kw)
 
-    S_TITLE   = sty('title',  fontSize=32, textColor=ROUGE,
-                    spaceAfter=2, leading=34)
-    S_SUB     = sty('sub',    fontSize=8,  textColor=GRIS,
-                    spaceAfter=8, leading=10)
-    S_H2      = sty('h2',     fontSize=14, textColor=ROUGE,
-                    spaceBefore=10, spaceAfter=4)
-    S_LABEL   = sty('lbl',    fontSize=9,  textColor=GRIS_CLR,
-                    leading=12)
-    S_DETAIL  = sty('det',    fontSize=8,  textColor=GRIS,
-                    leading=12, fontName='Courier')
-    S_SCORE   = sty('sc',     fontSize=52, textColor=score_color,
-                    leading=56, alignment=TA_CENTER)
-    S_SLABEL  = sty('slbl',   fontSize=13, textColor=score_color,
-                    leading=16, alignment=TA_CENTER)
-    S_PENAL   = sty('pen',    fontSize=8,  textColor=GRIS,
-                    leading=13, fontName='Courier')
-    S_TIP     = sty('tip',    fontSize=8,  textColor=GRIS,
-                    leading=13, fontName='Courier')
-    S_FOOTER  = sty('ftr',    fontSize=7,  textColor=GRIS_CLR,
-                    alignment=TA_CENTER, leading=10)
+    S_TITLE  = sty('title', fontSize=32, textColor=ROUGE, spaceAfter=2, leading=34)
+    S_SUB    = sty('sub',   fontSize=8,  textColor=GRIS,  spaceAfter=8, leading=10)
+    S_H2     = sty('h2',    fontSize=14, textColor=ROUGE, spaceBefore=10, spaceAfter=4)
+    S_LABEL  = sty('lbl',   fontSize=9,  textColor=GRIS_CLR, leading=12)
+    S_DETAIL = sty('det',   fontSize=8,  textColor=GRIS,  leading=12, fontName='Courier')
+    S_SCORE  = sty('sc',    fontSize=52, textColor=score_color, leading=56, alignment=TA_CENTER)
+    S_SLABEL = sty('slbl',  fontSize=13, textColor=score_color, leading=16, alignment=TA_CENTER)
+    S_PENAL  = sty('pen',   fontSize=8,  textColor=GRIS,  leading=13, fontName='Courier')
+    S_TIP    = sty('tip',   fontSize=8,  textColor=GRIS,  leading=13, fontName='Courier')
+    S_FOOTER = sty('ftr',   fontSize=7,  textColor=GRIS_CLR, alignment=TA_CENTER, leading=10)
 
     EMOJI_COLOR = {
         '🔴': ROUGE, '🟡': ORANGE, '🟢': VERT,
