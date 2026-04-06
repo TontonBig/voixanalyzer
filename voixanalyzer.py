@@ -1515,35 +1515,70 @@ def render_mode_avantapres():
 
         st.markdown("<hr style='border-color:#222;margin:24px 0'>", unsafe_allow_html=True)
 
-        # ── Score comparé
+        # ── Score comparé — layout card côte à côte sans colonnes imbriquées
         st.markdown("<h2>🏆 RÉSULTAT DE LA COMPARAISON</h2>", unsafe_allow_html=True)
 
         ds_color = "#00ff88" if delta_score > 0 else ("#ff3c3c" if delta_score < 0 else "#555")
+        arrow    = "▲" if delta_score > 0 else ("▼" if delta_score < 0 else "—")
+        ds_sign  = "+" if delta_score > 0 else ""
         ds_label = (f"▲ +{delta_score} pts — Le traitement a amélioré la prise ✓"
                     if delta_score > 0 else
                     f"▼ {delta_score} pts — Le traitement a dégradé la prise ✗"
-                    if delta_score < 0 else
-                    "— Score identique")
+                    if delta_score < 0 else "— Score identique")
 
-        col1, col2, col3 = st.columns([2, 1, 2])
-        with col1:
-            render_score(s_brut,   lb, cb, bd_brut)
-            st.markdown("<p style='text-align:center;color:#555;font-size:11px;margin-top:-8px'>BRUT</p>", unsafe_allow_html=True)
-        with col2:
-            st.markdown(f"""
-            <div style='display:flex;align-items:center;justify-content:center;height:100%;
-                        font-family:monospace;font-size:28px;color:{ds_color};
-                        font-weight:bold;text-align:center;padding-top:60px'>
-                →
-            </div>""", unsafe_allow_html=True)
-        with col3:
-            render_score(s_traite, lt, ct, bd_traite)
-            st.markdown("<p style='text-align:center;color:#555;font-size:11px;margin-top:-8px'>TRAITÉ</p>", unsafe_allow_html=True)
+        def mini_score_card(score, label, couleur, titre_card):
+            pct   = score / 100
+            r     = int(255 + (0 - 255) * pct)
+            g     = int(60  + (255 - 60) * pct)
+            col   = f"rgb({r},{g},80)"
+            rad   = 55
+            circ  = 2 * 3.14159 * rad
+            dash  = pct * circ
+            gap   = circ - dash
+            return f"""
+            <div style='flex:1;background:#111;border-radius:12px;padding:20px;
+                        text-align:center;border:1px solid #222'>
+                <div style='color:#333;font-size:9px;letter-spacing:3px;
+                            font-family:monospace;margin-bottom:10px'>{titre_card}</div>
+                <svg width="130" height="130" viewBox="0 0 130 130">
+                  <circle cx="65" cy="65" r="{rad}" fill="none"
+                    stroke="#1a1a1a" stroke-width="10"/>
+                  <circle cx="65" cy="65" r="{rad}" fill="none"
+                    stroke="{col}" stroke-width="10"
+                    stroke-dasharray="{dash:.1f} {gap:.1f}"
+                    stroke-linecap="round"
+                    transform="rotate(-90 65 65)"/>
+                  <text x="65" y="60" text-anchor="middle" fill="{col}"
+                    style="font-family:monospace;font-size:34px;font-weight:bold">{score}</text>
+                  <text x="65" y="78" text-anchor="middle" fill="#444"
+                    style="font-family:monospace;font-size:9px">/100</text>
+                </svg>
+                <div style='color:{col};font-family:monospace;font-size:13px;
+                            font-weight:bold;letter-spacing:3px;margin-top:4px'>{label}</div>
+            </div>"""
+
+        arrow_html = f"""
+        <div style='display:flex;align-items:center;justify-content:center;
+                    padding:0 16px;flex-shrink:0'>
+            <div style='text-align:center'>
+                <div style='color:{ds_color};font-size:32px;font-weight:bold;
+                            font-family:monospace'>{arrow}</div>
+                <div style='color:{ds_color};font-size:20px;font-weight:bold;
+                            font-family:monospace'>{ds_sign}{delta_score}</div>
+                <div style='color:#444;font-size:9px;font-family:monospace;
+                            letter-spacing:1px'>PTS</div>
+            </div>
+        </div>"""
 
         st.markdown(f"""
+        <div style='display:flex;align-items:center;gap:8px;margin:16px 0'>
+            {mini_score_card(s_brut,   lb, cb, 'BRUT')}
+            {arrow_html}
+            {mini_score_card(s_traite, lt, ct, 'TRAITÉ')}
+        </div>
         <div style='background:#111;border:2px solid {ds_color};border-radius:12px;
-                    padding:16px 24px;text-align:center;margin:16px 0'>
-            <span style='color:{ds_color};font-family:monospace;font-size:16px;
+                    padding:14px 24px;text-align:center;margin:12px 0'>
+            <span style='color:{ds_color};font-family:monospace;font-size:15px;
                          font-weight:bold;letter-spacing:2px'>{ds_label}</span>
         </div>""", unsafe_allow_html=True)
 
@@ -1558,53 +1593,362 @@ def render_mode_avantapres():
         st.markdown("<h2>📊 ÉVOLUTION DES MÉTRIQUES</h2>", unsafe_allow_html=True)
         st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>▲ vert = amélioré · ▼ rouge = dégradé</p>", unsafe_allow_html=True)
 
-        render_delta("RMS actif",          a_brut['rms'],         a_traite['rms'],         " dB")
-        render_delta("Bruit de fond",      a_brut['noise_floor'], a_traite['noise_floor'],  " dB", inverse=True)
-        render_delta("SNR",                a_brut['snr'],         a_traite['snr'],          " dB")
-        render_delta("RT60 (réverb)",      a_brut['rt60'],        a_traite['rt60'],         " ms", inverse=True)
-        render_delta("Crest factor",       a_brut['crest'],       a_traite['crest'],        " dB")
-        render_delta("Régularité volume",  a_brut['vol_std'],     a_traite['vol_std'],      " dB", inverse=True)
-        render_delta("Sibilance (écart)",  a_brut['sib_ecart'],   a_traite['sib_ecart'],    " dB", inverse=True)
-        render_delta("Déséquilibre spectral", a_brut['deseq'],    a_traite['deseq'],        " dB", inverse=True)
-        render_delta("Attaques",           a_brut['attaques'],    a_traite['attaques'],     "/10")
+        render_delta("RMS actif",             a_brut['rms'],         a_traite['rms'],         " dB")
+        render_delta("Bruit de fond",         a_brut['noise_floor'], a_traite['noise_floor'],  " dB", inverse=True)
+        render_delta("SNR",                   a_brut['snr'],         a_traite['snr'],          " dB")
+        render_delta("RT60 (réverb)",         a_brut['rt60'],        a_traite['rt60'],         " ms", inverse=True)
+        render_delta("Crest factor",          a_brut['crest'],       a_traite['crest'],        " dB")
+        render_delta("Régularité volume",     a_brut['vol_std'],     a_traite['vol_std'],      " dB", inverse=True)
+        render_delta("Sibilance (écart)",     a_brut['sib_ecart'],   a_traite['sib_ecart'],    " dB", inverse=True)
+        render_delta("Déséquilibre spectral", a_brut['deseq'],       a_traite['deseq'],        " dB", inverse=True)
+        render_delta("Attaques",              a_brut['attaques'],    a_traite['attaques'],     "/10")
 
-        # ── Ce que le traitement a amélioré / dégradé
+        # ── Bilan + conseils ciblés
         st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
         st.markdown("<h2 style='color:#00ff88'>✅ BILAN DU TRAITEMENT</h2>", unsafe_allow_html=True)
 
-        ameliore, degrade, neutre = [], [], []
+        ameliore, degrade_items = [], []
 
         checks = [
-            ("SNR",            a_brut['snr'],         a_traite['snr'],         2,  False, "SNR amélioré — bruit réduit"),
-            ("Réverb",         a_brut['rt60'],        a_traite['rt60'],        100, True,  "Réverb réduite"),
-            ("Déséquilibre EQ",a_brut['deseq'],       a_traite['deseq'],       3,  True,  "EQ plus équilibré"),
-            ("Sibilance",      a_brut['sib_ecart'],   a_traite['sib_ecart'],   1,  True,  "Sibilance contrôlée"),
-            ("Volume régulier",a_brut['vol_std'],     a_traite['vol_std'],     1,  True,  "Volume plus régulier"),
-            ("Attaques",       a_brut['attaques'],    a_traite['attaques'],    1,  False, "Attaques améliorées"),
-            ("Crest factor",   a_brut['crest'],       a_traite['crest'],       2,  False, "Dynamique préservée"),
-            ("Saturation",     a_brut['clips'],       a_traite['clips'],       1,  True,  "Saturation ajoutée au traitement"),
+            ("SNR",            a_brut['snr'],         a_traite['snr'],         2,  False,
+             "SNR amélioré — bruit réduit",
+             "SNR dégradé — ton traitement amplifie le bruit. Vérifie que le noise gate / noise reduction est bien réglé avant la compression."),
+            ("Réverb",         a_brut['rt60'],        a_traite['rt60'],        100, True,
+             "Réverb réduite — prise plus sèche",
+             f"Réverb augmentée ({a_brut['rt60']:.0f}ms → {a_traite['rt60']:.0f}ms) — tu as ajouté de la réverb ? Si c'est involontaire, vérifie qu'aucun plugin de réverb n'est actif sur la piste voix."),
+            ("Déséquilibre EQ",a_brut['deseq'],       a_traite['deseq'],       3,  True,
+             "EQ plus équilibré — beau travail",
+             f"EQ déséquilibré ({a_brut['deseq']:.0f}dB → {a_traite['deseq']:.0f}dB) — l'écart graves/présence a augmenté. Coupe encore à 300Hz et booste 3.5kHz."),
+            ("Sibilance",      a_brut['sib_ecart'],   a_traite['sib_ecart'],   1,  True,
+             "Sibilance contrôlée — de-esser efficace",
+             f"Sibilance augmentée ({a_brut['sib_ecart']:.1f}dB → {a_traite['sib_ecart']:.1f}dB) — le de-esser est trop léger ou absent. Centre-le à 7-8kHz, threshold plus bas."),
+            ("Volume régulier",a_brut['vol_std'],     a_traite['vol_std'],     1,  True,
+             "Volume plus régulier — compression propre",
+             f"Volume plus irrégulier ({a_brut['vol_std']:.1f}dB → {a_traite['vol_std']:.1f}dB) — compresseur trop léger ou attaque trop lente. Essaie ratio 4:1, attaque 10ms."),
+            ("Attaques",       a_brut['attaques'],    a_traite['attaques'],    0.5, False,
+             "Attaques préservées — transients intacts",
+             f"Attaques écrasées ({a_brut['attaques']:.1f} → {a_traite['attaques']:.1f}/10) — compresseur trop rapide. Ouvre l'attaque à 20-30ms pour laisser passer les transitoires."),
+            ("Crest factor",   a_brut['crest'],       a_traite['crest'],       3,  False,
+             "Dynamique naturelle préservée",
+             f"Dynamique écrasée (crest {a_brut['crest']:.0f}dB → {a_traite['crest']:.0f}dB) — sur-compression. Réduis le ratio ou monte le threshold."),
+            ("Saturation",     float(a_brut['clips']), float(a_traite['clips']), 1, True,
+             None,
+             "Saturation ajoutée au traitement — un plugin sature la voix. Vérifie les niveaux de sortie de chaque effet."),
         ]
 
-        for nom, vb, vt, seuil, inv, msg_ok in checks:
+        for nom, vb, vt, seuil, inv, msg_ok, msg_ko in checks:
             delta = (vb - vt) if inv else (vt - vb)
-            if delta >= seuil:
+            if delta >= seuil and msg_ok:
                 ameliore.append(msg_ok)
             elif delta <= -seuil:
-                degrade.append(f"{nom} dégradé")
+                degrade_items.append(msg_ko)
 
         for msg in ameliore:
-            st.markdown(f"<div style='background:#0a1a0a;border-left:3px solid #00ff88;"
-                        f"border-radius:6px;padding:8px 14px;margin:4px 0;"
-                        f"color:#00ff88;font-size:12px;font-family:monospace'>✓ {msg}</div>",
-                        unsafe_allow_html=True)
-        for msg in degrade:
-            st.markdown(f"<div style='background:#1a0a0a;border-left:3px solid #ff3c3c;"
-                        f"border-radius:6px;padding:8px 14px;margin:4px 0;"
-                        f"color:#ff3c3c;font-size:12px;font-family:monospace'>✗ {msg}</div>",
-                        unsafe_allow_html=True)
-        if not ameliore and not degrade:
+            st.markdown(f"""<div style='background:#0a1a0a;border-left:3px solid #00ff88;
+                border-radius:6px;padding:10px 14px;margin:4px 0;
+                color:#00ff88;font-size:12px;font-family:monospace'>✓ {msg}</div>""",
+                unsafe_allow_html=True)
+
+        for msg in degrade_items:
+            st.markdown(f"""<div style='background:#1a0a0a;border-left:3px solid #ff3c3c;
+                border-radius:6px;padding:10px 14px;margin:4px 0'>
+                <div style='color:#ff3c3c;font-size:12px;font-family:monospace;
+                            font-weight:bold;margin-bottom:4px'>✗ Problème détecté</div>
+                <div style='color:#884444;font-size:11px;font-family:monospace;
+                            line-height:1.6'>{msg}</div>
+            </div>""", unsafe_allow_html=True)
+
+        if not ameliore and not degrade_items:
             st.markdown("<p style='color:#555;font-size:11px'>Aucune différence significative détectée.</p>",
                         unsafe_allow_html=True)
+
+        # ── Export PDF avant/après
+        st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+        st.markdown("<h2>📄 EXPORTER LE RAPPORT COMPARATIF</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Rapport complet brut vs traité — scores, spectres, métriques, bilan</p>", unsafe_allow_html=True)
+
+        with st.spinner("Génération du PDF comparatif..."):
+            pdf_bytes = generer_pdf_comparatif(
+                up_brut.name, up_traite.name,
+                duree_brut, duree_traite,
+                s_brut, lb, bd_brut, a_brut, x_brut,
+                s_traite, lt, bd_traite, a_traite, x_traite,
+                sr, delta_score, ds_label,
+                ameliore, degrade_items
+            )
+        nom_pdf = up_brut.name.rsplit(".", 1)[0] + "_comparatif.pdf"
+        st.download_button("⬇️ TÉLÉCHARGER LE RAPPORT COMPARATIF",
+                           data=pdf_bytes, file_name=nom_pdf,
+                           mime="application/pdf", use_container_width=True)
+
+
+# ═══════════════════════════════════════════════════
+#  EXPORT PDF COMPARATIF
+# ═══════════════════════════════════════════════════
+
+def generer_pdf_comparatif(nom_brut, nom_traite, duree_brut, duree_traite,
+                            s_brut, lb, bd_brut, a_brut, x_brut,
+                            s_traite, lt, bd_traite, a_traite, x_traite,
+                            sr, delta_score, ds_label,
+                            ameliore, degrade_items):
+    import io, datetime
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                     Table, TableStyle, HRFlowable, Image as RLImage)
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVu',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'))
+        pdfmetrics.registerFont(TTFont('DejaVuBold',
+            '/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf'))
+        MONO = 'DejaVu'; MONO_BOLD = 'DejaVuBold'
+    except Exception:
+        MONO = 'Courier'; MONO_BOLD = 'Courier-Bold'
+
+    ROUGE   = colors.HexColor('#ff3c3c')
+    VERT    = colors.HexColor('#00ff88')
+    ORANGE  = colors.HexColor('#ff8c00')
+    GRIS    = colors.HexColor('#555555')
+    GRIS_CLR= colors.HexColor('#333333')
+    BLANC   = colors.white
+    BG_DARK = colors.HexColor('#111111')
+    ds_color_hex = ('#00ff88' if delta_score > 0 else
+                    '#ff3c3c' if delta_score < 0 else '#555555')
+    DS_COLOR = colors.HexColor(ds_color_hex)
+
+    def sty(name, fontName=None, textColor=None, fontSize=9, leading=13, **kw):
+        return ParagraphStyle(name,
+            fontName=fontName or MONO_BOLD,
+            textColor=textColor or BLANC,
+            fontSize=fontSize, leading=leading, **kw)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=18*mm, rightMargin=18*mm,
+                            topMargin=14*mm, bottomMargin=14*mm)
+
+    S_TITLE  = sty('t',  fontSize=28, textColor=ROUGE, leading=30, spaceAfter=2)
+    S_SUB    = sty('s',  fontSize=7,  textColor=GRIS, leading=9, spaceAfter=6)
+    S_H2     = sty('h2', fontSize=13, textColor=ROUGE, spaceBefore=8, spaceAfter=4)
+    S_SCORE  = sty('sc', fontSize=42, leading=46, alignment=TA_CENTER)
+    S_MONO   = sty('mo', fontSize=8,  textColor=GRIS, leading=13, fontName=MONO)
+    S_FOOTER = sty('ft', fontSize=7,  textColor=GRIS_CLR, alignment=TA_CENTER, leading=9)
+    S_OK     = sty('ok', fontSize=8,  textColor=VERT, leading=13, fontName=MONO)
+    S_KO     = sty('ko', fontSize=8,  textColor=ROUGE, leading=13, fontName=MONO)
+    S_KO_DET = sty('kd', fontSize=7.5,textColor=colors.HexColor('#884444'),
+                   leading=12, fontName=MONO)
+
+    story = []
+    date_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    # ── En-tête
+    story.append(Paragraph("VOIXANALYZER", S_TITLE))
+    story.append(Paragraph("RAPPORT COMPARATIF — BRUT VS TRAITÉ", S_SUB))
+    story.append(HRFlowable(width="100%", thickness=1, color=ROUGE, spaceAfter=8))
+
+    info_data = [
+        ["Prise brute",   nom_brut,   "Durée brute",   f"{duree_brut:.1f} s"],
+        ["Prise traitée", nom_traite, "Durée traitée", f"{duree_traite:.1f} s"],
+        ["Date",          date_str,   "Fréquence",     "44 100 Hz · Mono"],
+    ]
+    tbl_i = Table(info_data, colWidths=[28*mm, 62*mm, 28*mm, 47*mm])
+    tbl_i.setStyle(TableStyle([
+        ('FONTNAME',   (0,0),(-1,-1), MONO),
+        ('FONTSIZE',   (0,0),(-1,-1), 7.5),
+        ('TEXTCOLOR',  (0,0),(0,-1),  GRIS),
+        ('TEXTCOLOR',  (2,0),(2,-1),  GRIS),
+        ('TEXTCOLOR',  (1,0),(1,-1),  BLANC),
+        ('TEXTCOLOR',  (3,0),(3,-1),  BLANC),
+        ('BACKGROUND', (0,0),(-1,-1), BG_DARK),
+        ('ROWBACKGROUNDS',(0,0),(-1,-1),[BG_DARK, colors.HexColor('#161616')]),
+        ('TOPPADDING', (0,0),(-1,-1), 3),
+        ('BOTTOMPADDING',(0,0),(-1,-1),3),
+        ('LEFTPADDING',(0,0),(-1,-1), 6),
+    ]))
+    story.append(tbl_i)
+    story.append(Spacer(1, 10))
+
+    # ── Scores côte à côte
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=6))
+    story.append(Paragraph("SCORES COMPARÉS", S_H2))
+
+    def score_col(score, label, bd):
+        sc_color = colors.HexColor(
+            '#ff3c3c' if score < 35 else '#ff8c00' if score < 55 else
+            '#ffcc00' if score < 70 else '#88ff44' if score < 85 else '#00ff88')
+        lines = ("Aucune pénalité" if not bd else
+                 "\n".join([f"  {n}  {v:+d} pts" for n, v in bd]))
+        return [
+            Paragraph(str(score), ParagraphStyle('si', fontName=MONO_BOLD,
+                fontSize=40, textColor=sc_color, leading=44, alignment=TA_CENTER)),
+            Paragraph(label, ParagraphStyle('sl', fontName=MONO_BOLD,
+                fontSize=10, textColor=sc_color, leading=13, alignment=TA_CENTER)),
+            Spacer(1, 4),
+            Paragraph(lines, ParagraphStyle('sp', fontName=MONO,
+                fontSize=7, textColor=GRIS, leading=12)),
+        ]
+
+    arrow_sign = f"{'+'if delta_score>0 else ''}{delta_score}"
+    scores_tbl = Table(
+        [[score_col(s_brut, lb, bd_brut),
+          [Paragraph("BRUT", sty('bl', fontSize=7, textColor=GRIS, alignment=TA_CENTER)),
+           Spacer(1,10),
+           Paragraph(arrow_sign, ParagraphStyle('ar', fontName=MONO_BOLD,
+               fontSize=22, textColor=DS_COLOR, leading=26, alignment=TA_CENTER)),
+           Paragraph("PTS", sty('pt', fontSize=7, textColor=GRIS_CLR,
+               alignment=TA_CENTER)),
+           Spacer(1,6),
+           Paragraph("TRAITÉ", sty('tl', fontSize=7, textColor=GRIS,
+               alignment=TA_CENTER))],
+          score_col(s_traite, lt, bd_traite)]],
+        colWidths=[72*mm, 21*mm, 72*mm]
+    )
+    scores_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0),(-1,-1), BG_DARK),
+        ('VALIGN',     (0,0),(-1,-1), 'TOP'),
+        ('TOPPADDING', (0,0),(-1,-1), 10),
+        ('BOTTOMPADDING',(0,0),(-1,-1), 10),
+        ('LEFTPADDING',(0,0),(-1,-1), 10),
+        ('LINEAFTER',  (0,0),(1,-1),  0.5, GRIS_CLR),
+    ]))
+    story.append(scores_tbl)
+
+    story.append(Paragraph(ds_label.replace('▲','[+]').replace('▼','[-]'),
+                           ParagraphStyle('ds', fontName=MONO_BOLD, fontSize=10,
+                               textColor=DS_COLOR, leading=14, alignment=TA_CENTER,
+                               spaceBefore=6, spaceAfter=4,
+                               borderColor=DS_COLOR, borderWidth=1,
+                               borderPadding=8, backColor=BG_DARK)))
+    story.append(Spacer(1, 8))
+
+    # ── Spectre comparatif en image
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=6))
+    story.append(Paragraph("COMPARAISON SPECTRALE", S_H2))
+
+    def compute_smooth(x):
+        N = min(len(x), 131072)
+        X = np.abs(rfft(x[:N] * np.hanning(N))) ** 2
+        freqs = rfftfreq(N, 1.0 / sr)
+        mask  = (freqs >= 20) & (freqs <= 20000)
+        f_p, X_p = freqs[mask], X[mask]
+        log_f = np.log10(f_p + 1)
+        f_b = np.linspace(log_f[0], log_f[-1], 300)
+        Xs  = np.interp(f_b, log_f, 10*np.log10(X_p + 1e-12))
+        return 10**f_b, np.convolve(Xs, np.ones(15)/15, mode='same')
+
+    f_hz, X_b = compute_smooth(x_brut)
+    _,    X_t = compute_smooth(x_traite)
+    X_ta = X_t + (np.mean(X_b) - np.mean(X_t))
+
+    import io as _io
+    fig3, ax3 = plt.subplots(figsize=(10, 3))
+    fig3.patch.set_facecolor('#0d0d0d')
+    ax3.set_facecolor('#0d0d0d')
+    for f0,f1,col in [(20,80,'#1a0a0a'),(80,200,'#1a1000'),(200,500,'#0a1200'),
+                       (500,2000,'#0a100a'),(2000,5000,'#0a0a18'),
+                       (5000,10000,'#0d0a18'),(10000,20000,'#0a0d18')]:
+        ax3.axvspan(f0,f1,color=col,alpha=1.0)
+    ax3.plot(f_hz, X_b,  color='#ff3c3c', linewidth=1.4, label='Brut')
+    ax3.plot(f_hz, X_ta, color='#00ff88', linewidth=1.4, label='Traité')
+    ax3.fill_between(f_hz, X_b, X_ta, where=(X_ta>X_b),  color='#00ff88', alpha=0.07)
+    ax3.fill_between(f_hz, X_b, X_ta, where=(X_ta<=X_b), color='#ff3c3c', alpha=0.07)
+    ax3.set_xscale('log'); ax3.set_xlim(20,20000)
+    ax3.tick_params(colors='#555', labelsize=7)
+    ax3.xaxis.set_major_formatter(FuncFormatter(
+        lambda v,_: f"{int(v/1000)}k" if v>=1000 else str(int(v))))
+    ax3.xaxis.set_major_locator(plt.FixedLocator(
+        [20,50,100,200,500,1000,2000,5000,10000,20000]))
+    for sp in ax3.spines.values(): sp.set_edgecolor('#222')
+    ax3.grid(True, which='major', color='#1a1a1a', linewidth=0.5)
+    ax3.legend(loc='lower right', facecolor='#111',
+               edgecolor='#333', labelcolor='#aaa', fontsize=7)
+    fig3.tight_layout(pad=0.8)
+    img_buf3 = _io.BytesIO()
+    fig3.savefig(img_buf3, format='png', dpi=130,
+                 facecolor='#0d0d0d', bbox_inches='tight')
+    plt.close(fig3)
+    img_buf3.seek(0)
+    story.append(RLImage(img_buf3, width=165*mm, height=50*mm))
+    story.append(Spacer(1, 8))
+
+    # ── Métriques delta
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=6))
+    story.append(Paragraph("ÉVOLUTION DES MÉTRIQUES", S_H2))
+
+    metrics_rows = [
+        ["MÉTRIQUE", "BRUT", "TRAITÉ", "DELTA"],
+        ["RMS actif",          f"{a_brut['rms']:.1f} dB",      f"{a_traite['rms']:.1f} dB",      f"{a_traite['rms']-a_brut['rms']:+.1f} dB"],
+        ["SNR",                f"{a_brut['snr']:.1f} dB",      f"{a_traite['snr']:.1f} dB",      f"{a_traite['snr']-a_brut['snr']:+.1f} dB"],
+        ["RT60 (réverb)",      f"{a_brut['rt60']:.0f} ms",     f"{a_traite['rt60']:.0f} ms",     f"{a_traite['rt60']-a_brut['rt60']:+.0f} ms"],
+        ["Crest factor",       f"{a_brut['crest']:.1f} dB",    f"{a_traite['crest']:.1f} dB",    f"{a_traite['crest']-a_brut['crest']:+.1f} dB"],
+        ["Régularité vol.",    f"{a_brut['vol_std']:.1f} dB",  f"{a_traite['vol_std']:.1f} dB",  f"{a_traite['vol_std']-a_brut['vol_std']:+.1f} dB"],
+        ["Sibilance écart",    f"{a_brut['sib_ecart']:.1f} dB",f"{a_traite['sib_ecart']:.1f} dB",f"{a_traite['sib_ecart']-a_brut['sib_ecart']:+.1f} dB"],
+        ["Déséquil. spectral", f"{a_brut['deseq']:.1f} dB",   f"{a_traite['deseq']:.1f} dB",   f"{a_traite['deseq']-a_brut['deseq']:+.1f} dB"],
+        ["Attaques",           f"{a_brut['attaques']:.1f}/10", f"{a_traite['attaques']:.1f}/10", f"{a_traite['attaques']-a_brut['attaques']:+.1f}/10"],
+    ]
+    tbl_m = Table(metrics_rows, colWidths=[42*mm, 38*mm, 38*mm, 32*mm])
+    ts_m = [
+        ('FONTNAME',    (0,0),(-1,-1), MONO),
+        ('FONTSIZE',    (0,0),(-1,-1), 7.5),
+        ('BACKGROUND',  (0,0),(-1,-1), BG_DARK),
+        ('ROWBACKGROUNDS',(1,0),(-1,-1),[BG_DARK, colors.HexColor('#131313')]),
+        ('TEXTCOLOR',   (0,0),(-1,0),  ROUGE),
+        ('TEXTCOLOR',   (0,1),(2,-1),  GRIS),
+        ('FONTNAME',    (0,0),(-1,0),  MONO_BOLD),
+        ('TOPPADDING',  (0,0),(-1,-1), 4),
+        ('BOTTOMPADDING',(0,0),(-1,-1),4),
+        ('LEFTPADDING', (0,0),(-1,-1), 7),
+        ('GRID',        (0,0),(-1,-1), 0.4, GRIS_CLR),
+    ]
+    # Colorie la colonne delta selon positif/négatif
+    INVERSED = {'RT60 (réverb)', 'Régularité vol.', 'Sibilance écart', 'Déséquil. spectral'}
+    for i, row in enumerate(metrics_rows[1:], 1):
+        nom_row = row[0]
+        try:
+            d_val = float(row[3].split('/')[0].replace(' dB','').replace(' ms',''))
+        except Exception:
+            d_val = 0
+        if nom_row in INVERSED:
+            d_val = -d_val
+        c = VERT if d_val > 0 else (ROUGE if d_val < 0 else GRIS)
+        ts_m.append(('TEXTCOLOR', (3,i),(3,i), c))
+        ts_m.append(('FONTNAME',  (3,i),(3,i), MONO_BOLD))
+    tbl_m.setStyle(TableStyle(ts_m))
+    story.append(tbl_m)
+    story.append(Spacer(1, 8))
+
+    # ── Bilan
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=6))
+    story.append(Paragraph("BILAN DU TRAITEMENT", S_H2))
+
+    for msg in ameliore:
+        story.append(Paragraph(f"[OK]  {msg}", S_OK))
+    for msg in degrade_items:
+        lines = msg.split(' — ', 1)
+        story.append(Paragraph(f"[!!]  Problème detecte", S_KO))
+        if len(lines) > 1:
+            story.append(Paragraph(f"      {lines[1]}", S_KO_DET))
+
+    story.append(Spacer(1, 14))
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                            color=GRIS_CLR, spaceAfter=4))
+    story.append(Paragraph(
+        f"VoixAnalyzer · Rapport comparatif · {date_str} · voixanalyzer.streamlit.app",
+        S_FOOTER))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ═══════════════════════════════════════════════════
