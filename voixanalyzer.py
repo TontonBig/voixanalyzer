@@ -1622,29 +1622,44 @@ def render_mode_avantapres():
 
         checks = [
             ("SNR",            a_brut['snr'],         a_traite['snr'],         2,  False,
-             "SNR amélioré — bruit réduit",
-             "SNR dégradé — ton traitement amplifie le bruit. Vérifie que le noise gate / noise reduction est bien réglé avant la compression."),
+             "✓ Bruit de fond réduit — la voix ressort mieux",
+             "Le bruit de fond a augmenté après traitement. "
+             "C'est souvent la compression qui est trop forte — elle monte le volume de tout, y compris les silences. "
+             "Essaie de baisser un peu la compression, ou ajoute un plugin 'Noise Reduction' ou 'Silence' avant elle."),
             ("Réverb",         a_brut['rt60'],        a_traite['rt60'],        100, True,
-             "Réverb réduite — prise plus sèche",
-             f"Réverb augmentée ({a_brut['rt60']:.0f}ms → {a_traite['rt60']:.0f}ms) — tu as ajouté de la réverb ? Si c'est involontaire, vérifie qu'aucun plugin de réverb n'est actif sur la piste voix."),
+             "✓ Son plus sec — la pièce résonne moins",
+             f"La réverb a augmenté ({a_brut['rt60']:.0f}ms → {a_traite['rt60']:.0f}ms). "
+             "Est-ce que tu as ajouté un effet de réverb ? Si non, vérifie que tous tes plugins sont bien désactivés sur la piste voix — il y en a peut-être un actif sans que tu t'en rendes compte."),
             ("Déséquilibre EQ",a_brut['deseq'],       a_traite['deseq'],       3,  True,
-             "EQ plus équilibré — beau travail",
-             f"EQ déséquilibré ({a_brut['deseq']:.0f}dB → {a_traite['deseq']:.0f}dB) — l'écart graves/présence a augmenté. Coupe encore à 300Hz et booste 3.5kHz."),
+             "✓ Son plus équilibré — les graves et les aigus sont mieux dosés",
+             f"La voix est encore plus déséquilibrée qu'avant ({a_brut['deseq']:.0f}dB → {a_traite['deseq']:.0f}dB) — trop de grave par rapport à la clarté. "
+             "Dans ton EQ, baisse un peu vers 300Hz (les fréquences qui donnent un son 'dans une boîte') "
+             "et monte un peu vers 3000-4000Hz (les fréquences qui rendent la voix claire et présente)."),
             ("Sibilance",      a_brut['sib_ecart'],   a_traite['sib_ecart'],   1,  True,
-             "Sibilance contrôlée — de-esser efficace",
-             f"Sibilance augmentée ({a_brut['sib_ecart']:.1f}dB → {a_traite['sib_ecart']:.1f}dB) — le de-esser est trop léger ou absent. Centre-le à 7-8kHz, threshold plus bas."),
+             "✓ Les S et CH sont bien dosés — pas agressifs",
+             f"Les S et CH sont devenus plus sifflants après traitement ({a_brut['sib_ecart']:.1f}dB → {a_traite['sib_ecart']:.1f}dB). "
+             "Cherche un plugin appelé 'De-esser' dans ton logiciel — il est fait exactement pour ça. "
+             "Si tu n'en as pas, tu peux baisser légèrement les fréquences autour de 7000-8000Hz dans ton EQ."),
             ("Volume régulier",a_brut['vol_std'],     a_traite['vol_std'],     1,  True,
-             "Volume plus régulier — compression propre",
-             f"Volume plus irrégulier ({a_brut['vol_std']:.1f}dB → {a_traite['vol_std']:.1f}dB) — compresseur trop léger ou attaque trop lente. Essaie ratio 4:1, attaque 10ms."),
+             "✓ Volume plus régulier — la voix reste stable",
+             f"Le volume est encore plus irrégulier après traitement ({a_brut['vol_std']:.1f}dB → {a_traite['vol_std']:.1f}dB). "
+             "La compression n'a pas assez travaillé. Essaie d'augmenter le ratio (passe à 4:1 ou plus) "
+             "ou de baisser le threshold (le seuil de déclenchement) pour que l'effet s'applique plus souvent."),
             ("Attaques",       a_brut['attaques'],    a_traite['attaques'],    0.5, False,
-             "Attaques préservées — transients intacts",
-             f"Attaques écrasées ({a_brut['attaques']:.1f} → {a_traite['attaques']:.1f}/10) — compresseur trop rapide. Ouvre l'attaque à 20-30ms pour laisser passer les transitoires."),
+             "✓ Début des mots percutant — voix nette et présente",
+             f"Les débuts de mots sont devenus plus mous après traitement ({a_brut['attaques']:.1f} → {a_traite['attaques']:.1f}/10). "
+             "La compression est trop rapide et 'avale' le début des mots. "
+             "Cherche le paramètre 'Attack' dans ton compresseur et augmente sa valeur — mets-le autour de 20 à 30ms."),
             ("Crest factor",   a_brut['crest'],       a_traite['crest'],       3,  False,
-             "Dynamique naturelle préservée",
-             f"Dynamique écrasée (crest {a_brut['crest']:.0f}dB → {a_traite['crest']:.0f}dB) — sur-compression. Réduis le ratio ou monte le threshold."),
+             "✓ Dynamique naturelle préservée — la voix reste vivante",
+             f"La voix a perdu son naturel — elle sonne trop 'plate' et compressée ({a_brut['crest']:.0f}dB → {a_traite['crest']:.0f}dB). "
+             "La compression est trop agressive. Baisse le ratio (essaie 2:1 ou 3:1) "
+             "ou monte le threshold pour que le compresseur intervienne moins souvent."),
             ("Saturation",     float(a_brut['clips']), float(a_traite['clips']), 1, True,
              None,
-             "Saturation ajoutée au traitement — un plugin sature la voix. Vérifie les niveaux de sortie de chaque effet."),
+             "La voix sature (distorsion) après traitement — le son devient 'sale' et abîmé. "
+             "Vérifie le volume de sortie de chaque effet : l'un d'eux pousse le son trop fort. "
+             "Baisse le volume de sortie ('Output' ou 'Gain') de tes plugins un par un jusqu'à trouver lequel cause le problème."),
         ]
 
         for nom, vb, vt, seuil, inv, msg_ok, msg_ko in checks:
@@ -1913,19 +1928,22 @@ def generer_pdf_comparatif(nom_brut, nom_traite, duree_brut, duree_traite,
         ('BACKGROUND',  (0,0),(-1,-1), BG_DARK),
         ('ROWBACKGROUNDS',(1,0),(-1,-1),[BG_DARK, colors.HexColor('#131313')]),
         ('TEXTCOLOR',   (0,0),(-1,0),  ROUGE),
-        ('TEXTCOLOR',   (0,1),(2,-1),  GRIS),
         ('FONTNAME',    (0,0),(-1,0),  MONO_BOLD),
+        ('TEXTCOLOR',   (0,1),(0,-1),  GRIS),   # col métrique
+        ('TEXTCOLOR',   (1,1),(1,-1),  GRIS),   # col brut
+        ('TEXTCOLOR',   (2,1),(2,-1),  BLANC),  # col traité
         ('TOPPADDING',  (0,0),(-1,-1), 4),
         ('BOTTOMPADDING',(0,0),(-1,-1),4),
         ('LEFTPADDING', (0,0),(-1,-1), 7),
         ('GRID',        (0,0),(-1,-1), 0.4, GRIS_CLR),
     ]
-    # Colorie la colonne delta selon positif/négatif
+    # Colorie la colonne delta (col 3) — appliquer EN DERNIER pour ne pas être écrasé
     INVERSED = {'RT60 (réverb)', 'Régularité vol.', 'Sibilance écart', 'Déséquil. spectral'}
     for i, row in enumerate(metrics_rows[1:], 1):
         nom_row = row[0]
         try:
-            d_val = float(row[3].split('/')[0].replace(' dB','').replace(' ms',''))
+            raw = row[3].split('/')[0].replace(' dB','').replace(' ms','').strip()
+            d_val = float(raw)
         except Exception:
             d_val = 0
         if nom_row in INVERSED:
@@ -1944,11 +1962,16 @@ def generer_pdf_comparatif(nom_brut, nom_traite, duree_brut, duree_traite,
 
     for msg in ameliore:
         story.append(Paragraph(f"[OK]  {msg}", S_OK))
+        story.append(Spacer(1, 2))
     for msg in degrade_items:
-        lines = msg.split(' — ', 1)
-        story.append(Paragraph(f"[!!]  Problème detecte", S_KO))
-        if len(lines) > 1:
-            story.append(Paragraph(f"      {lines[1]}", S_KO_DET))
+        # msg format: "Titre — explication détaillée"
+        parts = msg.split(' — ', 1)
+        titre_ko = parts[0].strip()
+        detail_ko = parts[1].strip() if len(parts) > 1 else msg
+        story.append(Spacer(1, 3))
+        story.append(Paragraph(f"[!!]  {titre_ko}", S_KO))
+        story.append(Paragraph(f"       → {detail_ko}", S_KO_DET))
+        story.append(Spacer(1, 2))
 
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=0.5,
