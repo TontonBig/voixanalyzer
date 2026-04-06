@@ -1531,30 +1531,24 @@ def render_mode_avantapres():
             r     = int(255 + (0 - 255) * pct)
             g     = int(60  + (255 - 60) * pct)
             col   = f"rgb({r},{g},80)"
-            rad   = 55
-            circ  = 2 * 3.14159 * rad
-            dash  = pct * circ
-            gap   = circ - dash
+            # Barre de progression CSS pure — pas de SVG
+            bar_w = int(pct * 100)
             return f"""
-            <div style='flex:1;background:#111;border-radius:12px;padding:20px;
-                        text-align:center;border:1px solid #222'>
+            <div style='flex:1;background:#111;border-radius:12px;padding:20px 16px;
+                        text-align:center;border:1px solid #222;min-width:0'>
                 <div style='color:#333;font-size:9px;letter-spacing:3px;
-                            font-family:monospace;margin-bottom:10px'>{titre_card}</div>
-                <svg width="130" height="130" viewBox="0 0 130 130">
-                  <circle cx="65" cy="65" r="{rad}" fill="none"
-                    stroke="#1a1a1a" stroke-width="10"/>
-                  <circle cx="65" cy="65" r="{rad}" fill="none"
-                    stroke="{col}" stroke-width="10"
-                    stroke-dasharray="{dash:.1f} {gap:.1f}"
-                    stroke-linecap="round"
-                    transform="rotate(-90 65 65)"/>
-                  <text x="65" y="60" text-anchor="middle" fill="{col}"
-                    style="font-family:monospace;font-size:34px;font-weight:bold">{score}</text>
-                  <text x="65" y="78" text-anchor="middle" fill="#444"
-                    style="font-family:monospace;font-size:9px">/100</text>
-                </svg>
-                <div style='color:{col};font-family:monospace;font-size:13px;
-                            font-weight:bold;letter-spacing:3px;margin-top:4px'>{label}</div>
+                            font-family:monospace;margin-bottom:12px'>{titre_card}</div>
+                <div style='color:{col};font-family:monospace;font-size:52px;
+                            font-weight:bold;line-height:1'>{score}</div>
+                <div style='color:#333;font-family:monospace;font-size:9px;
+                            margin-bottom:10px'>/100</div>
+                <div style='background:#1a1a1a;border-radius:4px;height:6px;
+                            margin:0 10px 10px 10px;overflow:hidden'>
+                    <div style='background:{col};height:100%;width:{bar_w}%;
+                                border-radius:4px;transition:width 0.8s ease'></div>
+                </div>
+                <div style='color:{col};font-family:monospace;font-size:12px;
+                            font-weight:bold;letter-spacing:3px'>{label}</div>
             </div>"""
 
         arrow_html = f"""
