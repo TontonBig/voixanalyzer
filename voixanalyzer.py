@@ -3,6 +3,11 @@ import numpy as np
 import tempfile, os
 from scipy import signal
 from scipy.fft import rfft, rfftfreq
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.ticker import FuncFormatter
 
 EPS = 1e-12
 
@@ -103,29 +108,31 @@ def mesure_clipping(x):
 
 def mesure_plosives(x, sr):
     """
-    Plosives = pics d'énergie sub (<120 Hz) très courts et intenses.
-    Retourne (count, positions_ms)
+    Plosives v2 — seuil adaptatif + confirmation signal vocal.
+    Pics d'énergie sub (<120 Hz) courts et intenses,
+    confirmés par présence vocale (500-4000 Hz) dans les 25ms suivantes.
     """
-    b, a = signal.butter(4, min(120.0/(sr/2), 0.95), btype='lowpass')
-    x_lo = signal.lfilter(b, a, x)
-    hop = max(1, int(sr * 5 / 1000))
-    n_frames = (len(x_lo) - hop) // hop
-    frames_lo = np.array([np.max(np.abs(x_lo[i*hop:(i+1)*hop])) for i in range(n_frames)])
-    if len(frames_lo) == 0:
+    b_lo, a_lo = signal.butter(4, min(120.0/(sr/2), 0.95), btype='lowpass')
+    x_lo = signal.lfilter(b_lo, a_lo, x)
+    b_mid, a_mid = signal.butter(2, [500/(sr/2), min(4000/(sr/2), 0.95)], btype='bandpass')
+    x_mid = signal.lfilter(b_mid, a_mid, x)
+    hop  = max(1, int(sr * 5 / 1000))
+    n_f  = (len(x_lo) - hop) // hop
+    if n_f == 0:
         return 0, []
-    thr = np.percentile(frames_lo, 97)
-    # Une plosive = frame qui dépasse 2x le seuil haut
-    mask = frames_lo > thr * 2.0
-    # Dédoublonne les détections proches
-    positions_ms = []
-    last = -500
-    for i, m in enumerate(mask):
-        if m:
-            t_ms = i * 5
-            if t_ms - last > 200:
-                positions_ms.append(t_ms)
-                last = t_ms
-    return len(positions_ms), positions_ms
+    fl = np.array([np.max(np.abs(x_lo [i*hop:(i+1)*hop])) for i in range(n_f)])
+    fm = np.array([np.max(np.abs(x_mid[i*hop:(i+1)*hop])) for i in range(n_f)])
+    # Seuil adaptatif 85p * 1.8 (plus sensible que l'ancien 97p * 2.0)
+    thr     = np.percentile(fl, 85) * 1.8
+    mid_thr = np.percentile(fm, 60)
+    plosives = []; last = -500
+    for i in range(1, len(fl) - 2):
+        t_ms = i * 5
+        if (fl[i] > thr and fl[i] > fl[i-1] * 1.5
+                and any(fm[min(i+1,len(fm)-1):min(i+5,len(fm))] > mid_thr)
+                and t_ms - last > 150):
+            plosives.append(t_ms); last = t_ms
+    return len(plosives), plosives
 
 def mesure_sibilance(x, sr):
     """
@@ -223,19 +230,44 @@ def mesure_effet_proximite(x, sr):
 
 def mesure_attaques(x, sr):
     """
-    Score d'attaque des mots — netteté des transitoires voix.
-    Voix naturelle non compressée : > 5/10
+    Score d'attaque des mots v3 — adaptatif au bruit de fond.
+    Détecte les vrais onsets vocaux (transitions silence→voix)
+    et mesure la vitesse de montée en dB/ms.
+    Calibration : > 6 = bonnes attaques, < 3 = molles / sur-compressé.
     """
-    hop = max(1, int(sr * 2 / 1000))
-    env = np.sqrt(np.mean(frames_fn(x, sr, 5, 2)**2, axis=1) + EPS)
-    if len(env) < 2:
-        return 5.0
-    rises = np.diff(env)
-    rises = rises[rises > 0]
-    if len(rises) == 0:
-        return 0.0
-    score = float(np.percentile(rises, 90)) / (float(np.mean(env)) + EPS)
-    return float(min(score * 3, 10.0))
+    hop_ms = 5
+    rms_f  = rms_db_frames(x, sr, 20, hop_ms)
+
+    # Seuils adaptatifs — fonctionnent même avec réverb de pièce
+    noise_floor  = float(np.percentile(rms_f, 8))
+    thr_silence  = noise_floor + 8.0
+    thr_active   = float(np.percentile(rms_f, 40))
+
+    onsets = []
+    for i in range(3, len(rms_f) - 1):
+        rise       = rms_f[i] - rms_f[i-3]
+        was_silent = rms_f[i-3] < thr_silence
+        is_active  = rms_f[i]   > thr_active
+        if rise > 8.0 and was_silent and is_active:
+            onsets.append(i)
+
+    if len(onsets) < 2:
+        # Fallback : volatilité du signal actif
+        active = rms_f[rms_f > thr_active]
+        if len(active) < 4:
+            return 3.0
+        diff = np.diff(active)
+        pos  = diff[diff > 0]
+        return round(float(np.clip(np.percentile(pos, 80) * 2, 0, 10)), 1) if len(pos) > 0 else 1.0
+
+    speeds = []
+    for idx in onsets:
+        start = max(0, idx - 4)
+        speeds.append((rms_f[idx] - rms_f[start]) / ((idx - start) * hop_ms + EPS))
+
+    avg_speed = float(np.median(speeds))
+    # speed > 4 dB/ms = 8-10/10 | 2-4 = 5-7 | 1-2 = 3-4 | < 1 = 1-2
+    return round(float(np.clip(avg_speed * 2.2, 0.5, 10)), 1)
 
 def mesure_fins_phrases(x, sr):
     """
@@ -287,6 +319,17 @@ def mesure_minceur(b):
     """
     return (b['low'] + b['lo_mid']) / 2
 
+def mesure_desequilibre_spectral(b):
+    """
+    Déséquilibre = écart lo_mid vs hi_mid.
+    Problème n°1 des voix home studio.
+    > 15 dB = massif | > 8 dB = notable | < 8 = correct
+    """
+    deseq_main = b['lo_mid'] - b['hi_mid']
+    graves = (b['sub'] + b['low'] + b['lo_mid']) / 3.0
+    aigus  = (b['hi_mid'] + b['air']) / 2.0
+    return float(deseq_main), float(graves - aigus)
+
 # ═══════════════════════════════════════════════════
 #  ANALYSE COMPLÈTE
 # ═══════════════════════════════════════════════════
@@ -313,6 +356,7 @@ def analyser_voix(x, sr):
     a['agressivite']   = mesure_agressivite(b)
     a['sourd']         = mesure_sourd(b)
     a['minceur']       = mesure_minceur(b)
+    a['deseq'], a['balance'] = mesure_desequilibre_spectral(b)
     return a
 
 # ═══════════════════════════════════════════════════
@@ -540,6 +584,20 @@ def bloc_couleur(a):
         d.append(("🟡", f"Voix très aérée/brillante (6-12 kHz : {b['air']:.0f} dB)",
             "Beaucoup d'air — attention à la sibilance et à la fatigue d'écoute. Vérifie que ça ne sonne pas artificiel."))
 
+    # Déséquilibre spectral — problème n°1 des voix home studio
+    if a['deseq'] > 15:
+        d.append(("🔴", f"Déséquilibre spectral MASSIF — graves écrasent la présence ({a['deseq']:.0f} dB d'écart)",
+            f"Les lo-mids ({b['lo_mid']:.0f} dB) dominent de {a['deseq']:.0f} dB sur la zone de présence ({b['hi_mid']:.0f} dB). "
+            "C'est le problème n°1 des voix home studio — la voix sonne sourde, boxy, peu définie. "
+            "Plan d'attaque : HPF à 100 Hz + coupe -5 dB à 300 Hz + boost +4 dB à 3.5 kHz + high shelf +2 dB à 10 kHz."))
+    elif a['deseq'] > 8:
+        d.append(("🟡", f"Déséquilibre spectral notable ({a['deseq']:.0f} dB entre graves et présence)",
+            f"Les lo-mids ({b['lo_mid']:.0f} dB) dominent sur la présence ({b['hi_mid']:.0f} dB). "
+            "Coupe -3 dB à 300 Hz et booste +2 dB à 3.5 kHz pour équilibrer."))
+    elif a['deseq'] < -5:
+        d.append(("🟡", f"Voix brillante — présence domine les graves ({abs(a['deseq']):.0f} dB d'écart)",
+            "La voix est très définie mais peut sonner mince ou agressive. Un léger boost à 200-300 Hz apporterait de la chaleur."))
+
     # Si timbre globalement bon
     if not any(e == "🔴" for e, _, _ in d):
         d.append(("🟢", "Timbre global équilibré",
@@ -653,22 +711,25 @@ def bloc_verdict(a):
 
     # Ordre de priorité
     priorites = []
+    n = 1
     if a['clips'] > 0 and a['consec_clips'] >= 3:
-        priorites.append("1. REFAIRE la prise (saturation irréparable)")
+        priorites.append(f"{n}. REFAIRE la prise (saturation irréparable)"); n+=1
     if a['noise_floor'] > -35:
-        priorites.append("2. Traiter le bruit de fond (RX ou Noise Gate)")
+        priorites.append(f"{n}. Traiter le bruit de fond (RX ou Noise Gate)"); n+=1
     if a['plosives_count'] >= 3:
-        priorites.append("3. Corriger les plosives (HPF 80 Hz)")
+        priorites.append(f"{n}. Corriger les plosives (HPF 80 Hz)"); n+=1
     if a['rt60'] > 600:
-        priorites.append("4. Traiter la réverb (déréverbération)")
+        priorites.append(f"{n}. Traiter la réverb (déréverbération)"); n+=1
     if a['vol_std'] > 6:
-        priorites.append("5. Compression (régulariser le volume)")
-    if a['boxy'] > -16 or a['nasalite'] > 3:
-        priorites.append("6. EQ correctif (boue/nasalité)")
+        priorites.append(f"{n}. Compression (régulariser le volume)"); n+=1
+    if a['deseq'] > 15:
+        priorites.append(f"{n}. EQ correctif PRIORITAIRE — HPF 100Hz + coupe 300Hz + boost 3.5kHz"); n+=1
+    elif a['boxy'] > -16 or a['nasalite'] > 3:
+        priorites.append(f"{n}. EQ correctif (boue/nasalité 300-400 Hz)"); n+=1
     if a['sib_ecart'] > 2:
-        priorites.append("7. De-esser (sibilance)")
-    if a['sourd'] < -24:
-        priorites.append("8. EQ présence/air (ouvrir le timbre)")
+        priorites.append(f"{n}. De-esser (sibilance 7-8 kHz)"); n+=1
+    if a['sourd'] < -24 or a['deseq'] > 8:
+        priorites.append(f"{n}. EQ présence/air — boost 3.5kHz + high shelf 10kHz"); n+=1
 
     if priorites:
         d.append(("🔵", "Ordre de traitement recommandé",
@@ -679,6 +740,535 @@ def bloc_verdict(a):
         "Justesse (pitch) · Timing musical · Émotion · Interprétation · Intelligibilité des mots · Cohérence entre prises · Qualité de la performance"))
 
     return d
+
+# ═══════════════════════════════════════════════════
+#  SCORE GLOBAL
+# ═══════════════════════════════════════════════════
+
+def calculer_score(a):
+    """
+    Score sur 100. Chaque problème critique enlève des points.
+    Retourne (score, label, couleur_hex, breakdown)
+    """
+    score = 100
+    breakdown = []
+
+    # Propreté (30 pts)
+    if a['clips'] > 0 and a['consec_clips'] >= 3:
+        score -= 20; breakdown.append(("Saturation", -20))
+    elif a['clips'] > 0:
+        score -= 8;  breakdown.append(("Légère saturation", -8))
+    elif a['near_clips'] > 50:
+        score -= 4;  breakdown.append(("Niveau trop chaud", -4))
+
+    if a['noise_floor'] > -35:
+        score -= 12; breakdown.append(("Bruit de fond fort", -12))
+    elif a['noise_floor'] > -45:
+        score -= 5;  breakdown.append(("Bruit de fond modéré", -5))
+
+    if a['rt60'] > 1200:
+        score -= 10; breakdown.append(("Réverb forte", -10))
+    elif a['rt60'] > 600:
+        score -= 5;  breakdown.append(("Réverb présente", -5))
+
+    if a['plosives_count'] >= 5:
+        score -= 6;  breakdown.append(("Plosives fréquentes", -6))
+    elif a['plosives_count'] >= 2:
+        score -= 3;  breakdown.append(("Quelques plosives", -3))
+
+    if a['clics_bouche'] >= 8:
+        score -= 6;  breakdown.append(("Clics de bouche", -6))
+    elif a['clics_bouche'] >= 3:
+        score -= 2;  breakdown.append(("Légers clics", -2))
+
+    # Contrôle (20 pts)
+    if a['vol_std'] > 8:
+        score -= 10; breakdown.append(("Volume très irrégulier", -10))
+    elif a['vol_std'] > 5:
+        score -= 5;  breakdown.append(("Volume irrégulier", -5))
+
+    if a['crest'] < 10:
+        score -= 8;  breakdown.append(("Sur-compressé à la source", -8))
+    elif a['crest'] < 14:
+        score -= 3;  breakdown.append(("Dynamique limitée", -3))
+
+    if a['attaques'] < 3:
+        score -= 6;  breakdown.append(("Attaques molles", -6))
+    elif a['attaques'] < 5:
+        score -= 2;  breakdown.append(("Attaques faibles", -2))
+
+    # Spectre (20 pts)
+    if a['deseq'] > 15:
+        score -= 12; breakdown.append(("Déséquilibre spectral massif", -12))
+    elif a['deseq'] > 8:
+        score -= 5;  breakdown.append(("Déséquilibre spectral", -5))
+
+    if a['sib_ecart'] > 3:
+        score -= 6;  breakdown.append(("Sibilance excessive", -6))
+    elif a['sib_ecart'] > 1:
+        score -= 2;  breakdown.append(("Légère sibilance", -2))
+
+    score = max(0, min(100, score))
+
+    if score >= 85:
+        label, couleur = "PRISE PRO", "#00ff88"
+    elif score >= 70:
+        label, couleur = "BONNE PRISE", "#88ff44"
+    elif score >= 55:
+        label, couleur = "PRISE CORRECTE", "#ffcc00"
+    elif score >= 35:
+        label, couleur = "À AMÉLIORER", "#ff8c00"
+    else:
+        label, couleur = "REFAIRE", "#ff3c3c"
+
+    return score, label, couleur, breakdown
+
+
+def render_score(score, label, couleur, breakdown):
+    """Affiche le score global avec jauge circulaire CSS."""
+    pct = score / 100
+    # Dégradé de couleur du rouge au vert
+    r_start, g_start = 255, 60
+    r_end,   g_end   = 0,   255
+    r = int(r_start + (r_end - r_start) * pct)
+    g = int(g_start + (g_end - g_start) * pct)
+    color = f"rgb({r},{g},80)"
+
+    # Jauge circulaire via SVG inline
+    radius = 70
+    circ   = 2 * 3.14159 * radius
+    dash   = pct * circ
+    gap    = circ - dash
+
+    bd_html = ""
+    for nom, val in breakdown:
+        bd_html += f"<span style='color:#555;font-size:10px;letter-spacing:1px'>{nom} <b style='color:#ff3c3c'>{val}</b></span><br>"
+
+    st.markdown(f"""
+    <div style='display:flex;align-items:center;gap:40px;background:#111;border-radius:16px;padding:28px 32px;margin:16px 0;border:1px solid #222'>
+        <div style='flex-shrink:0;text-align:center'>
+            <svg width="180" height="180" viewBox="0 0 180 180">
+              <circle cx="90" cy="90" r="{radius}" fill="none" stroke="#1a1a1a" stroke-width="14"/>
+              <circle cx="90" cy="90" r="{radius}" fill="none" stroke="{color}" stroke-width="14"
+                stroke-dasharray="{dash:.1f} {gap:.1f}"
+                stroke-linecap="round"
+                transform="rotate(-90 90 90)"
+                style="transition:stroke-dasharray 1s ease"/>
+              <text x="90" y="82" text-anchor="middle" fill="{color}"
+                style="font-family:'Bebas Neue',sans-serif;font-size:48px;letter-spacing:2px">{score}</text>
+              <text x="90" y="105" text-anchor="middle" fill="#555"
+                style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:3px">/100</text>
+            </svg>
+            <div style='color:{color};font-family:"Bebas Neue",sans-serif;font-size:22px;letter-spacing:4px;margin-top:-8px'>{label}</div>
+        </div>
+        <div style='flex:1'>
+            <div style='color:#333;font-size:10px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px'>DÉTAIL DES PÉNALITÉS</div>
+            {"<div style='color:#444;font-size:11px;font-style:italic'>Aucune pénalité — prise parfaite 🎯</div>" if not breakdown else bd_html}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════
+#  GRAPHE SPECTRAL ANNOTÉ
+# ═══════════════════════════════════════════════════
+
+def render_spectre(x, sr, a):
+    """Graphe spectral pro — courbe lissée + zones annotées + problèmes marqués."""
+    N = min(len(x), 131072)
+    window = np.hanning(N)
+    X = np.abs(rfft(x[:N] * window)) ** 2
+    freqs = rfftfreq(N, 1.0 / sr)
+
+    # Lissage par moyenne glissante log
+    mask = (freqs >= 20) & (freqs <= 20000)
+    f_plot = freqs[mask]
+    X_plot = X[mask]
+
+    # Smooth en espace log
+    log_f = np.log10(f_plot + 1)
+    smooth_bins = 300
+    f_log_bins = np.linspace(log_f[0], log_f[-1], smooth_bins)
+    X_smooth = np.interp(f_log_bins, log_f, 10 * np.log10(X_plot + 1e-12))
+
+    # Smooth supplémentaire
+    kernel = np.ones(15) / 15
+    X_smooth = np.convolve(X_smooth, kernel, mode='same')
+    f_bins_hz = 10 ** f_log_bins
+
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    fig.patch.set_facecolor('#0d0d0d')
+    ax.set_facecolor('#0d0d0d')
+
+    # Zones de couleur en arrière-plan
+    zones = [
+        (20,   80,   '#1a0a0a', 'SUB'),
+        (80,   200,  '#1a1000', 'GRAVES'),
+        (200,  500,  '#0a1200', 'LO-MID'),
+        (500,  2000, '#0a100a', 'MID'),
+        (2000, 5000, '#0a0a18', 'PRÉSENCE'),
+        (5000, 10000,'#0d0a18', 'SIBIL.'),
+        (10000,20000,'#0a0d18', 'AIR'),
+    ]
+    for f0, f1, col, label_z in zones:
+        ax.axvspan(f0, f1, color=col, alpha=1.0)
+        ax.text((f0 * f1) ** 0.5, X_smooth.max() + 1.5, label_z,
+                color='#333', fontsize=7, ha='center', va='bottom',
+                fontfamily='monospace')
+
+    # Courbe principale
+    ax.plot(f_bins_hz, X_smooth, color='#ff3c3c', linewidth=1.8, alpha=0.95)
+    ax.fill_between(f_bins_hz, X_smooth.min() - 5, X_smooth,
+                    color='#ff3c3c', alpha=0.08)
+
+    # Marqueurs de problèmes
+    b = a['bands']
+
+    def mark_freq(f_center, texte, couleur='#ff8c00', offset=4):
+        idx = np.argmin(np.abs(f_bins_hz - f_center))
+        y = X_smooth[idx]
+        ax.annotate(texte,
+            xy=(f_center, y), xytext=(f_center, y + offset),
+            color=couleur, fontsize=7.5, fontfamily='monospace',
+            ha='center', va='bottom',
+            arrowprops=dict(arrowstyle='->', color=couleur, lw=1.2),
+            bbox=dict(boxstyle='round,pad=0.3', fc='#0d0d0d', ec=couleur, lw=0.8))
+
+    if a['deseq'] > 8:
+        mark_freq(300, f"↑ boue\n+{a['deseq']:.0f}dB", '#ff3c3c', 5)
+        mark_freq(3500, "↓ manque\nprésence", '#ff8c00', 5)
+
+    if a['sib_ecart'] > 1:
+        mark_freq(7500, f"sibilance\n+{a['sib_ecart']:.0f}dB", '#ffcc00', 5)
+
+    if a['prox_ecart'] > 3:
+        mark_freq(120, f"proximité\n+{a['prox_ecart']:.0f}dB", '#ff6644', 5)
+
+    if b['air'] < -30:
+        mark_freq(12000, "manque\nd'air", '#4499ff', 5)
+
+    # Ligne de référence (spectre voix idéal approximatif)
+    ref_freqs = [20, 80, 200, 500, 1000, 3500, 8000, 16000, 20000]
+    ref_shape = [-25, -18, -14, -16, -16, -14, -18, -22, -26]
+    # Normalise la ref sur la même plage que la courbe
+    ref_interp = np.interp(np.log10(f_bins_hz), np.log10(ref_freqs), ref_shape)
+    offset_ref = np.mean(X_smooth) - np.mean(ref_interp)
+    ax.plot(f_bins_hz, ref_interp + offset_ref,
+            color='#00ff88', linewidth=1, alpha=0.25, linestyle='--')
+
+    # Style axes
+    ax.set_xscale('log')
+    ax.set_xlim(20, 20000)
+    ax.set_ylim(X_smooth.min() - 5, X_smooth.max() + 8)
+    ax.set_xlabel('Fréquence (Hz)', color='#444', fontsize=9, fontfamily='monospace')
+    ax.set_ylabel('Niveau (dB)', color='#444', fontsize=9, fontfamily='monospace')
+    ax.tick_params(colors='#444', labelsize=8)
+    ax.xaxis.set_major_formatter(FuncFormatter(
+        lambda x, _: f"{int(x/1000)}k" if x >= 1000 else str(int(x))))
+    ax.xaxis.set_major_locator(plt.FixedLocator([20,50,100,200,500,1000,2000,5000,10000,20000]))
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#222')
+    ax.grid(True, which='major', color='#1a1a1a', linewidth=0.8)
+    ax.grid(True, which='minor', color='#111', linewidth=0.4)
+
+    # Légende
+    leg = [mpatches.Patch(color='#ff3c3c', label='Ta voix'),
+           mpatches.Patch(color='#00ff88', alpha=0.4, label='Référence voix')]
+    ax.legend(handles=leg, loc='lower right', facecolor='#111',
+              edgecolor='#333', labelcolor='#666', fontsize=8)
+
+    ax.set_title('ANALYSE SPECTRALE', color='#ff3c3c',
+                 fontsize=11, fontfamily='monospace',
+                 loc='left', pad=10, fontweight='bold', letterspacing=3)
+
+    fig.tight_layout(pad=1.5)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+# ═══════════════════════════════════════════════════
+#  EXPORT PDF
+# ═══════════════════════════════════════════════════
+
+def generer_pdf(nom_fichier, duree, score, label_score, breakdown, a, x, sr):
+    """Génère un rapport PDF complet du diagnostic voix."""
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                     Table, TableStyle, HRFlowable, Image as RLImage)
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+    from reportlab.platypus import KeepTogether
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=18*mm, rightMargin=18*mm,
+                            topMargin=16*mm, bottomMargin=16*mm)
+
+    # ── Couleurs
+    ROUGE    = colors.HexColor('#ff3c3c')
+    VERT     = colors.HexColor('#00ff88')
+    ORANGE   = colors.HexColor('#ff8c00')
+    JAUNE    = colors.HexColor('#ffcc00')
+    BLEU     = colors.HexColor('#4499ff')
+    VIOLET   = colors.HexColor('#aa88ff')
+    BG_DARK  = colors.HexColor('#111111')
+    BG_PAGE  = colors.HexColor('#0d0d0d')
+    GRIS     = colors.HexColor('#555555')
+    GRIS_CLR = colors.HexColor('#333333')
+    BLANC    = colors.white
+
+    score_color = colors.HexColor(
+        '#ff3c3c' if score < 35 else
+        '#ff8c00' if score < 55 else
+        '#ffcc00' if score < 70 else
+        '#88ff44' if score < 85 else '#00ff88'
+    )
+
+    # ── Styles
+    def sty(name, **kw):
+        base = ParagraphStyle(name, fontName='Courier-Bold',
+                              textColor=BLANC, fontSize=10,
+                              leading=14, **kw)
+        return base
+
+    S_TITLE   = sty('title',  fontSize=32, textColor=ROUGE,
+                    spaceAfter=2, leading=34)
+    S_SUB     = sty('sub',    fontSize=8,  textColor=GRIS,
+                    spaceAfter=8, leading=10)
+    S_H2      = sty('h2',     fontSize=14, textColor=ROUGE,
+                    spaceBefore=10, spaceAfter=4)
+    S_LABEL   = sty('lbl',    fontSize=9,  textColor=GRIS_CLR,
+                    leading=12)
+    S_DETAIL  = sty('det',    fontSize=8,  textColor=GRIS,
+                    leading=12, fontName='Courier')
+    S_SCORE   = sty('sc',     fontSize=52, textColor=score_color,
+                    leading=56, alignment=TA_CENTER)
+    S_SLABEL  = sty('slbl',   fontSize=13, textColor=score_color,
+                    leading=16, alignment=TA_CENTER)
+    S_PENAL   = sty('pen',    fontSize=8,  textColor=GRIS,
+                    leading=13, fontName='Courier')
+    S_TIP     = sty('tip',    fontSize=8,  textColor=GRIS,
+                    leading=13, fontName='Courier')
+    S_FOOTER  = sty('ftr',    fontSize=7,  textColor=GRIS_CLR,
+                    alignment=TA_CENTER, leading=10)
+
+    EMOJI_COLOR = {
+        '🔴': ROUGE, '🟡': ORANGE, '🟢': VERT,
+        '🔵': BLEU,  '👂': VIOLET,
+    }
+
+    story = []
+
+    # ── Page de titre
+    story.append(Paragraph("VOIXANALYZER", S_TITLE))
+    story.append(Paragraph("RAPPORT DE DIAGNOSTIC — PRISE VOIX", S_SUB))
+    story.append(HRFlowable(width="100%", thickness=1, color=ROUGE, spaceAfter=10))
+
+    # Infos fichier
+    import datetime
+    date_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    info_data = [
+        ["Fichier", nom_fichier],
+        ["Durée", f"{duree:.1f} s"],
+        ["Date d'analyse", date_str],
+        ["Fréquence", "44 100 Hz · Mono"],
+    ]
+    tbl_info = Table(info_data, colWidths=[45*mm, 120*mm])
+    tbl_info.setStyle(TableStyle([
+        ('FONTNAME',    (0,0),(-1,-1), 'Courier'),
+        ('FONTSIZE',    (0,0),(-1,-1), 8),
+        ('TEXTCOLOR',   (0,0),(0,-1),  GRIS),
+        ('TEXTCOLOR',   (1,0),(1,-1),  BLANC),
+        ('BACKGROUND',  (0,0),(-1,-1), BG_DARK),
+        ('ROWBACKGROUNDS',(0,0),(-1,-1),[BG_DARK, colors.HexColor('#161616')]),
+        ('TOPPADDING',  (0,0),(-1,-1), 4),
+        ('BOTTOMPADDING',(0,0),(-1,-1),4),
+        ('LEFTPADDING', (0,0),(-1,-1), 8),
+    ]))
+    story.append(tbl_info)
+    story.append(Spacer(1, 12))
+
+    # ── Score global
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=8))
+    story.append(Paragraph("SCORE GLOBAL", S_H2))
+
+    score_tbl = Table(
+        [[Paragraph(str(score), S_SCORE),
+          Paragraph(f"{label_score}\n\n" +
+                    ("Aucune pénalité — prise parfaite" if not breakdown else
+                     "\n".join([f"{n}  {v:+d} pts" for n, v in breakdown])),
+                    S_PENAL)]],
+        colWidths=[50*mm, 115*mm]
+    )
+    score_tbl.setStyle(TableStyle([
+        ('BACKGROUND',  (0,0),(-1,-1), BG_DARK),
+        ('VALIGN',      (0,0),(-1,-1), 'MIDDLE'),
+        ('TOPPADDING',  (0,0),(-1,-1), 10),
+        ('BOTTOMPADDING',(0,0),(-1,-1),10),
+        ('LEFTPADDING', (0,0),(0,-1),  10),
+        ('LEFTPADDING', (1,0),(1,-1),  14),
+        ('LINEAFTER',   (0,0),(0,-1),  1, GRIS_CLR),
+    ]))
+    story.append(score_tbl)
+    story.append(Spacer(1, 10))
+
+    # ── Métriques clés
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=8))
+    story.append(Paragraph("MESURES CLÉS", S_H2))
+    metrics = [
+        ["RMS actif", f"{a['rms']:.0f} dB",
+         "Peak", f"{a['peak']:.1f} dB",
+         "Crest", f"{a['crest']:.0f} dB"],
+        ["SNR ~", f"{a['snr']:.0f} dB",
+         "RT60 ~", f"{a['rt60']:.0f} ms" if a['rt60'] > 0 else "sec",
+         "Bruit fond", f"{a['noise_floor']:.0f} dB"],
+    ]
+    tbl_m = Table(metrics, colWidths=[25*mm,22*mm,25*mm,22*mm,25*mm,22*mm])
+    tbl_m.setStyle(TableStyle([
+        ('FONTNAME',   (0,0),(-1,-1), 'Courier'),
+        ('FONTSIZE',   (0,0),(-1,-1), 8),
+        ('TEXTCOLOR',  (0,0),(0,-1),  GRIS),
+        ('TEXTCOLOR',  (2,0),(2,-1),  GRIS),
+        ('TEXTCOLOR',  (4,0),(4,-1),  GRIS),
+        ('TEXTCOLOR',  (1,0),(1,-1),  BLANC),
+        ('TEXTCOLOR',  (3,0),(3,-1),  BLANC),
+        ('TEXTCOLOR',  (5,0),(5,-1),  BLANC),
+        ('BACKGROUND', (0,0),(-1,-1), BG_DARK),
+        ('TOPPADDING', (0,0),(-1,-1), 5),
+        ('BOTTOMPADDING',(0,0),(-1,-1),5),
+        ('LEFTPADDING',(0,0),(-1,-1), 8),
+        ('GRID',       (0,0),(-1,-1), 0.5, GRIS_CLR),
+    ]))
+    story.append(tbl_m)
+    story.append(Spacer(1, 10))
+
+    # ── Spectre en image
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=8))
+    story.append(Paragraph("SPECTRE ANNOTÉ", S_H2))
+
+    # Génère le graphe matplotlib en mémoire
+    import io as _io
+    N = min(len(x), 131072)
+    window = np.hanning(N)
+    X_fft = np.abs(rfft(x[:N] * window)) ** 2
+    freqs  = rfftfreq(N, 1.0 / sr)
+    mask   = (freqs >= 20) & (freqs <= 20000)
+    f_plot = freqs[mask]; X_plot = X_fft[mask]
+    log_f  = np.log10(f_plot + 1)
+    smooth_bins = 300
+    f_log_bins  = np.linspace(log_f[0], log_f[-1], smooth_bins)
+    X_smooth    = np.interp(f_log_bins, log_f, 10*np.log10(X_plot + 1e-12))
+    X_smooth    = np.convolve(X_smooth, np.ones(15)/15, mode='same')
+    f_bins_hz   = 10 ** f_log_bins
+
+    fig2, ax2 = plt.subplots(figsize=(10, 3.5))
+    fig2.patch.set_facecolor('#0d0d0d')
+    ax2.set_facecolor('#0d0d0d')
+    zones2 = [(20,80,'#1a0a0a'),(80,200,'#1a1000'),(200,500,'#0a1200'),
+              (500,2000,'#0a100a'),(2000,5000,'#0a0a18'),(5000,10000,'#0d0a18'),
+              (10000,20000,'#0a0d18')]
+    for f0,f1,col in zones2:
+        ax2.axvspan(f0,f1,color=col,alpha=1.0)
+    ax2.plot(f_bins_hz, X_smooth, color='#ff3c3c', linewidth=1.6)
+    ax2.fill_between(f_bins_hz, X_smooth.min()-5, X_smooth,
+                     color='#ff3c3c', alpha=0.08)
+    ref_freqs = [20,80,200,500,1000,3500,8000,16000,20000]
+    ref_shape = [-25,-18,-14,-16,-16,-14,-18,-22,-26]
+    ref_interp = np.interp(np.log10(f_bins_hz), np.log10(ref_freqs), ref_shape)
+    ax2.plot(f_bins_hz, ref_interp + np.mean(X_smooth)-np.mean(ref_interp),
+             color='#00ff88', linewidth=0.8, alpha=0.3, linestyle='--')
+    ax2.set_xscale('log'); ax2.set_xlim(20,20000)
+    ax2.set_ylim(X_smooth.min()-5, X_smooth.max()+6)
+    ax2.tick_params(colors='#555', labelsize=7)
+    ax2.xaxis.set_major_formatter(FuncFormatter(
+        lambda v,_: f"{int(v/1000)}k" if v>=1000 else str(int(v))))
+    ax2.xaxis.set_major_locator(plt.FixedLocator(
+        [20,50,100,200,500,1000,2000,5000,10000,20000]))
+    for sp in ax2.spines.values(): sp.set_edgecolor('#222')
+    ax2.grid(True, which='major', color='#1a1a1a', linewidth=0.6)
+    fig2.tight_layout(pad=1.0)
+    img_buf = _io.BytesIO()
+    fig2.savefig(img_buf, format='png', dpi=130,
+                 facecolor='#0d0d0d', bbox_inches='tight')
+    plt.close(fig2)
+    img_buf.seek(0)
+    story.append(RLImage(img_buf, width=165*mm, height=58*mm))
+    story.append(Spacer(1, 10))
+
+    # ── Les 6 blocs de diagnostic
+    tous_blocs = [
+        ("1 — PROPRETÉ",      bloc_proprete(a)),
+        ("2 — CONTRÔLE",      bloc_controle(a)),
+        ("3 — COMPRÉHENSION", bloc_comprehension(a)),
+        ("4 — COULEUR",       bloc_couleur(a)),
+        ("5 — PROBLÈMES",     bloc_problemes(a)),
+        ("6 — VERDICT",       bloc_verdict(a)),
+    ]
+
+    for titre_bloc, items in tous_blocs:
+        story.append(HRFlowable(width="100%", thickness=1,
+                                color=colors.HexColor('#222'), spaceAfter=6))
+        story.append(Paragraph(titre_bloc, S_H2))
+
+        rows = []
+        for emoji, titre_item, detail in items:
+            c = EMOJI_COLOR.get(emoji, GRIS)
+            rows.append([
+                Paragraph(f"{emoji} {titre_item}",
+                          ParagraphStyle('ri', fontName='Courier-Bold',
+                                         fontSize=8, textColor=c, leading=12)),
+                Paragraph(detail,
+                          ParagraphStyle('rd', fontName='Courier',
+                                         fontSize=7.5, textColor=GRIS, leading=11))
+            ])
+        if rows:
+            tbl_b = Table(rows, colWidths=[68*mm, 97*mm])
+            tbl_b.setStyle(TableStyle([
+                ('BACKGROUND',   (0,0),(-1,-1), BG_DARK),
+                ('ROWBACKGROUNDS',(0,0),(-1,-1),
+                 [BG_DARK, colors.HexColor('#131313')]),
+                ('VALIGN',       (0,0),(-1,-1), 'TOP'),
+                ('TOPPADDING',   (0,0),(-1,-1), 5),
+                ('BOTTOMPADDING',(0,0),(-1,-1), 5),
+                ('LEFTPADDING',  (0,0),(-1,-1), 7),
+                ('RIGHTPADDING', (0,0),(-1,-1), 7),
+                ('GRID',         (0,0),(-1,-1), 0.4, GRIS_CLR),
+            ]))
+            story.append(tbl_b)
+        story.append(Spacer(1, 6))
+
+    # ── Conseils finaux
+    story.append(HRFlowable(width="100%", thickness=1,
+                            color=colors.HexColor('#222'), spaceAfter=6))
+    story.append(Paragraph("POUR TA PROCHAINE PRISE", S_H2))
+    conseils = [
+        "📍  15-20 cm du micro — ni trop pres (graves) ni trop loin (reverb)",
+        "🔇  Ferme les fenetres, coupe la clim, decroche le frigo",
+        "👕  Enregistre dans un placard plein de vetements",
+        "🎤  Anti-pop obligatoire — legerement de cote si tu manques de consonance",
+        "💧  Bois de l'eau avant pour eviter les clics de bouche",
+        "📱  Aucun traitement a l'entree — enregistre le signal brut",
+    ]
+    for c in conseils:
+        story.append(Paragraph(c, S_TIP))
+
+    story.append(Spacer(1, 16))
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                            color=GRIS_CLR, spaceAfter=4))
+    story.append(Paragraph(
+        f"Généré par VoixAnalyzer · {date_str} · voixanalyzer.streamlit.app",
+        S_FOOTER))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
+
 
 # ═══════════════════════════════════════════════════
 #  UI
@@ -732,7 +1322,20 @@ if st.button("🎙️ ANALYSER MA VOIX"):
 
     st.markdown("<hr style='border-color:#222;margin:24px 0'>", unsafe_allow_html=True)
 
-    # Métriques rapides
+    # ── SCORE GLOBAL ──
+    st.markdown("<h2>🏆 SCORE GLOBAL</h2>", unsafe_allow_html=True)
+    score, label_score, couleur_score, breakdown = calculer_score(a)
+    render_score(score, label_score, couleur_score, breakdown)
+    st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+
+    # ── SPECTRE ANNOTÉ ──
+    st.markdown("<h2>📈 SPECTRE ANNOTÉ</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Courbe rouge = ta voix · Pointillés verts = référence voix équilibrée · Marqueurs = problèmes détectés</p>", unsafe_allow_html=True)
+    render_spectre(x, sr, a)
+
+    st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+
+    # ── MÉTRIQUES RAPIDES ──
     st.markdown("<h3>📊 Mesures clés</h3>", unsafe_allow_html=True)
     c1,c2,c3,c4,c5,c6 = st.columns(6)
     c1.metric("RMS actif",   f"{a['rms']:.0f} dB")
@@ -763,6 +1366,24 @@ if st.button("🎙️ ANALYSER MA VOIX"):
     render_bloc("4 — COULEUR",      bloc_couleur(a))
     render_bloc("5 — PROBLÈMES",    bloc_problemes(a))
     render_bloc("6 — VERDICT",      bloc_verdict(a), couleur_titre="#00ff88")
+
+    st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
+
+    # ── EXPORT PDF ──
+    st.markdown("<h2>📄 EXPORTER LE RAPPORT</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#444;font-size:11px;margin-top:-16px'>Rapport complet — score, spectre annoté, tous les blocs de diagnostic</p>", unsafe_allow_html=True)
+    with st.spinner("Génération du PDF..."):
+        pdf_bytes = generer_pdf(
+            uploaded.name, duree, score, label_score, breakdown, a, x, sr
+        )
+    nom_pdf = uploaded.name.rsplit(".", 1)[0] + "_diagnostic.pdf"
+    st.download_button(
+        label="⬇️ TÉLÉCHARGER LE RAPPORT PDF",
+        data=pdf_bytes,
+        file_name=nom_pdf,
+        mime="application/pdf",
+        use_container_width=True,
+    )
 
     st.markdown("<hr style='border-color:#1a1a1a;margin:24px 0'>", unsafe_allow_html=True)
     st.markdown("""
